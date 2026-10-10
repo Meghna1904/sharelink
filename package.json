@@ -1,0 +1,13 @@
+{
+  "name": "sharelink-couple-app",
+  "version": "1.0.0",
+  "description": "A lightweight app for couples to save and share links.",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}
