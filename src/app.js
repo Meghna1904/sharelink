@@ -15,6 +15,7 @@ const MIME_TYPES = new Map([
 ]);
 
 export function createApp(options = {}) {
+  // Use Neon's openDatabase which will expect process.env.DATABASE_URL or the string passed here
   const db = options.db ?? openDatabase(options.dbPath);
   const publicDir = options.publicDir ? resolve(options.publicDir) : PUBLIC_DIR;
   const titleFetcher = options.titleFetcher ?? fetchPageTitle;
@@ -53,26 +54,24 @@ async function routeApi(req, res, url, context) {
       return;
     }
 
-    getOrCreateCouple(context.db, hashCode(auth.code, context.codeSecret));
+    await getOrCreateCouple(context.db, hashCode(auth.code, context.codeSecret));
     sendJson(res, 200, { partnerName: auth.name });
     return;
   }
 
-  const auth = authenticateRequest(req, context.db, context.codeSecret);
+  const auth = await authenticateRequest(req, context.db, context.codeSecret);
   if (!auth.ok) {
     sendJson(res, auth.status, { error: auth.error });
     return;
   }
 
   if (req.method === "GET" && url.pathname === "/api/links") {
-    const rows = context.db
-      .prepare(`
-        SELECT id, url, title, note, saver_name AS saverName, created_at AS createdAt, updated_at AS updatedAt
+    const rows = await context.db.all(`
+        SELECT id, url, title, note, saver_name AS "saverName", created_at AS "createdAt", updated_at AS "updatedAt"
         FROM links
-        WHERE couple_id = ?
+        WHERE couple_id = $1
         ORDER BY created_at DESC, id DESC
-      `)
-      .all(auth.couple.id);
+      `, [auth.couple.id]);
     sendJson(res, 200, { links: rows });
     return;
   }
@@ -86,14 +85,13 @@ async function routeApi(req, res, url, context) {
     }
 
     const title = parsed.title || (await context.titleFetcher(parsed.url)) || parsed.url;
-    const result = context.db
-      .prepare(`
+    const result = await context.db.get(`
         INSERT INTO links (couple_id, url, title, note, saver_name)
-        VALUES (?, ?, ?, ?, ?)
-      `)
-      .run(auth.couple.id, parsed.url, title, parsed.note, auth.name);
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING id
+      `, [auth.couple.id, parsed.url, title, parsed.note, auth.name]);
 
-    const link = getLink(context.db, auth.couple.id, Number(result.lastInsertRowid));
+    const link = await getLink(context.db, auth.couple.id, result.id);
     sendJson(res, 201, { link });
     return;
   }
@@ -101,7 +99,7 @@ async function routeApi(req, res, url, context) {
   const match = url.pathname.match(/^\/api\/links\/(\d+)$/);
   if (match && req.method === "PATCH") {
     const id = Number(match[1]);
-    const existing = getLink(context.db, auth.couple.id, id);
+    const existing = await getLink(context.db, auth.couple.id, id);
     if (!existing) {
       sendJson(res, 404, { error: "Link not found." });
       return;
@@ -121,21 +119,19 @@ async function routeApi(req, res, url, context) {
     const nextUrl = parsed.url ?? existing.url;
     const nextTitle = parsed.title ?? existing.title;
     const nextNote = parsed.note ?? existing.note;
-    context.db
-      .prepare(`
+    await context.db.query(`
         UPDATE links
-        SET url = ?, title = ?, note = ?, updated_at = datetime('now')
-        WHERE id = ? AND couple_id = ?
-      `)
-      .run(nextUrl, nextTitle || nextUrl, nextNote, id, auth.couple.id);
+        SET url = $1, title = $2, note = $3, updated_at = NOW()
+        WHERE id = $4 AND couple_id = $5
+      `, [nextUrl, nextTitle || nextUrl, nextNote, id, auth.couple.id]);
 
-    sendJson(res, 200, { link: getLink(context.db, auth.couple.id, id) });
+    sendJson(res, 200, { link: await getLink(context.db, auth.couple.id, id) });
     return;
   }
 
   if (match && req.method === "DELETE") {
     const id = Number(match[1]);
-    const existing = getLink(context.db, auth.couple.id, id);
+    const existing = await getLink(context.db, auth.couple.id, id);
     if (!existing) {
       sendJson(res, 404, { error: "Link not found." });
       return;
@@ -145,7 +141,7 @@ async function routeApi(req, res, url, context) {
       return;
     }
 
-    context.db.prepare("DELETE FROM links WHERE id = ? AND couple_id = ?").run(id, auth.couple.id);
+    await context.db.query("DELETE FROM links WHERE id = $1 AND couple_id = $2", [id, auth.couple.id]);
     sendJson(res, 200, { deleted: true });
     return;
   }
@@ -194,7 +190,7 @@ function validateLinkBody(body, { requireUrl }) {
   return { ok: true, url, title, note };
 }
 
-function authenticateRequest(req, db, codeSecret) {
+async function authenticateRequest(req, db, codeSecret) {
   const body = {
     name: req.headers["x-partner-name"],
     code: req.headers["x-couple-code"]
@@ -205,7 +201,7 @@ function authenticateRequest(req, db, codeSecret) {
   }
 
   const codeHash = hashCode(auth.code, codeSecret);
-  const couple = db.prepare("SELECT id FROM couples WHERE code_hash = ?").get(codeHash);
+  const couple = await db.get("SELECT id FROM couples WHERE code_hash = $1", [codeHash]);
   if (!couple) {
     return { ok: false, status: 401, error: "That shared code does not have a space yet." };
   }
@@ -213,19 +209,17 @@ function authenticateRequest(req, db, codeSecret) {
   return { ok: true, name: auth.name, couple };
 }
 
-function getOrCreateCouple(db, codeHash) {
-  db.prepare("INSERT OR IGNORE INTO couples (code_hash) VALUES (?)").run(codeHash);
-  return db.prepare("SELECT id FROM couples WHERE code_hash = ?").get(codeHash);
+async function getOrCreateCouple(db, codeHash) {
+  await db.query("INSERT INTO couples (code_hash) VALUES ($1) ON CONFLICT (code_hash) DO NOTHING", [codeHash]);
+  return await db.get("SELECT id FROM couples WHERE code_hash = $1", [codeHash]);
 }
 
-function getLink(db, coupleId, linkId) {
-  return db
-    .prepare(`
-      SELECT id, url, title, note, saver_name AS saverName, created_at AS createdAt, updated_at AS updatedAt
+async function getLink(db, coupleId, linkId) {
+  return await db.get(`
+      SELECT id, url, title, note, saver_name AS "saverName", created_at AS "createdAt", updated_at AS "updatedAt"
       FROM links
-      WHERE id = ? AND couple_id = ?
-    `)
-    .get(linkId, coupleId);
+      WHERE id = $1 AND couple_id = $2
+    `, [linkId, coupleId]);
 }
 
 function hashCode(code, secret) {
@@ -363,9 +357,7 @@ function sendJson(res, status, payload) {
 let vercelApp;
 export default async function (req, res) {
   if (!vercelApp) {
-    // Use /tmp on Vercel to avoid EROFS (Read-Only File System) errors.
-    // Note: Data in /tmp is ephemeral and will be lost on cold starts!
-    vercelApp = createApp({ dbPath: "/tmp/sharelink.sqlite" });
+    vercelApp = createApp();
   }
   return vercelApp(req, res);
 }
