@@ -2,3 +2,5 @@ data/*.sqlite
 data/*.sqlite-*
 node_modules/
 .env
+.neon
+.env.local
