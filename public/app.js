@@ -246,7 +246,7 @@ function compactUrl(value) {
 }
 
 function formatDate(value) {
-  const date = new Date(`${value}Z`);
+  const date = new Date(value.endsWith("Z") ? value : `${value}Z`);
   return new Intl.DateTimeFormat(undefined, {
     month: "short",
     day: "numeric",
