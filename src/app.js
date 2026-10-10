@@ -358,3 +358,14 @@ function sendJson(res, status, payload) {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8" });
   res.end(JSON.stringify(payload));
 }
+
+// Default export required for Vercel Serverless Functions
+let vercelApp;
+export default async function (req, res) {
+  if (!vercelApp) {
+    // Use /tmp on Vercel to avoid EROFS (Read-Only File System) errors.
+    // Note: Data in /tmp is ephemeral and will be lost on cold starts!
+    vercelApp = createApp({ dbPath: "/tmp/sharelink.sqlite" });
+  }
+  return vercelApp(req, res);
+}
