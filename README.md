@@ -1,62 +1,64 @@
 # ShareLink
 
-A lightweight web app for two partners to save links into one shared space. Each partner enters their name and the same shared code, then both see the same list of URLs with titles, notes, who saved each link, and when.
+A private space for two people to collect and share links together.
+
+## Design decisions
+
+**Visual identity.** A restrained warm-neutral palette — parchment surface, deep charcoal ink, single terracotta accent — with Fraunces (an expressive optical-size serif) for wordmarks and headings, and Inter for body and UI. No gradients, no heavy card borders. Depth comes from subtle rule lines and spacing, not shadows.
+
+**Organizing idea: editorial day feed.** Saved links appear as a chronological list grouped under italic day labels ("Today", "Yesterday", or a weekday date). Items sit on fine horizontal rules — like a shared bulletin board or read-later journal — not a grid of rounded cards. The most recent finds are always at the top.
+
+**Partner attribution.** Each partner is assigned one of four muted dot colors (sage, rose, slate, ochre) based on the order their name first appears. A small filled circle precedes every entry with a tooltip naming the saver. Clean, not cluttered.
+
+**Every state is designed.**
+- *Login* — centered, wordmark-led, warm copy, inline field hints.
+- *Loading* — spinner in the status bar below the composer, not a full page block.
+- *Title fetching* — "Fetching page title…" shown while the server scrapes, so paste-and-tap flows feel responsive.
+- *Empty* — an editorial glyph (✦) with warm, human copy.
+- *Error* — inline below the relevant field, with a ⚠ prefix, never a modal.
+- *Edit* — composer expands inline, URL field pre-filled, "Discard edits" cancel.
+- *Delete confirmation* — native `<dialog>` (keyboard-accessible, backdrop-dismissible), not a `confirm()`.
+
+**Mobile-first.** The composer is a single-line paste field by default that expands on focus. The save button sits flush right to be reachable with one thumb. Touch targets are 44–54 px. The feed fills the viewport width up to 680 px.
+
+**Accessibility.** Semantic HTML: `<header>`, `<section>`, `<article>`, `<ol>`, `<dialog>`. All inputs are labelled. `aria-live="assertive"` on error regions. `aria-live="polite"` on the feed. Visible focus rings (2.5 px outline offset) on every interactive element. Sufficient contrast in both light and dark (auto-detected via `prefers-color-scheme`).
+
+**Motion.** New items fade up 8 px on entry. The composer extras slide down on focus. All animation is under 220 ms and is disabled when `prefers-reduced-motion: reduce` is set.
+
+---
 
 ## Stack
 
-- Node.js 24
-- Built-in `node:http`
-- Built-in `node:sqlite`
-- Vanilla HTML, CSS, and JavaScript
-- Node's built-in test runner
+- **Backend** — Node.js 24, `node:http`, `@neondatabase/serverless` (Postgres)
+- **Frontend** — Vanilla HTML, CSS, ES modules — no framework, no bundler
+- **Fonts** — Fraunces + Inter via Google Fonts
 
-No package install is required.
-
-## Run Locally
+## Run locally
 
 ```bash
-npm start
+DATABASE_URL=postgres://... npm start
 ```
 
-Then open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000).
 
-The app stores data in `data/sharelink.sqlite` by default. You can change that path:
+For production, set a secret to hash shared codes:
 
 ```bash
-DB_PATH=./data/dev.sqlite npm start
+CODE_HASH_SECRET=replace-with-a-long-random-secret DATABASE_URL=postgres://... npm start
 ```
 
-For production, set a stable secret used to hash shared codes:
+## How a shared space is created
 
-```bash
-CODE_HASH_SECRET=replace-with-a-long-random-secret npm start
-```
+There is no admin setup. The first time two people enter the same code, a space is created automatically.
 
-## Creating a Couple
-
-There is no admin setup. A new couple is created the first time someone enters a name and a shared code. For example:
-
-1. Whiskey enters `Whiskey` and code `0101`.
-2. Matilda enters `Matilda` and the same code `0101`.
+1. Alice enters `Alice` and code `morning-coffee`.
+2. Ben enters `Ben` and the same code `morning-coffee`.
 3. Both land in the same shared link list.
 
-The code is a shared access key for the couple. It is stored as a server-side HMAC hash, not in plain text.
+The code is stored server-side as an HMAC-SHA256 hash — never in plain text.
 
 ## Tests
 
 ```bash
 npm test
 ```
-
-The tests cover:
-
-- Creating and joining a space with the shared code
-- Adding and listing links
-- Editing and deleting a partner's own links
-- Rejecting malformed URLs
-
-## Notes
-
-- Partners can edit or delete links saved under their own name.
-- URL input only accepts `http` and `https`.
-- If a title is left blank, the server tries to fetch the page title and falls back to the URL.

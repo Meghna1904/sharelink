@@ -3,96 +3,201 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ShareLink</title>
+    <title>ShareLink — a quiet place for two</title>
+    <meta name="description" content="A private space for two people to save and share links together." />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,600;1,9..144,300;1,9..144,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="shell">
-      <section class="login-view" id="loginView">
-        <p class="eyebrow">A warm little corner for two.</p>
-        <div class="panel login-panel">
-          <form id="loginForm" novalidate>
-            <label class="label" for="partnerName">Who is walking in?</label>
-            <input id="partnerName" name="name" autocomplete="name" placeholder="Your name" required />
 
-            <label class="label" for="coupleCode">Shared code</label>
-            <input id="coupleCode" name="code" autocomplete="current-password" placeholder="0101" required />
-
-            <p class="error" id="loginError" role="alert"></p>
-            <button class="primary-button" type="submit">Open the room</button>
-          </form>
-        </div>
-      </section>
-
-      <section class="app-view hidden" id="appView">
-        <header class="topbar">
-          <div>
-            <p class="eyebrow" id="spaceLabel">Shared space</p>
-            <h1>ShareLink</h1>
-          </div>
-          <button class="ghost-button" id="logoutButton" type="button">Switch</button>
+    <!-- ═══════════════════════════════════════════════════
+         LOGIN VIEW
+    ════════════════════════════════════════════════════ -->
+    <div class="view login-view" id="loginView">
+      <div class="login-shell">
+        <header class="login-wordmark">
+          <h1>Share<em>Link</em></h1>
+          <p>A quiet place to collect things together.</p>
         </header>
 
-        <section class="panel composer">
-          <form id="linkForm" novalidate>
-            <input type="hidden" id="editingId" />
-            <div class="form-grid">
-              <label>
-                <span class="label">URL</span>
-                <input id="urlInput" name="url" inputmode="url" placeholder="https://example.com/find" required />
-              </label>
-              <label>
-                <span class="label">Title</span>
-                <input id="titleInput" name="title" placeholder="Optional" />
-              </label>
+        <form id="loginForm" class="login-form" novalidate>
+          <div class="field">
+            <label for="partnerName">Your name</label>
+            <input
+              id="partnerName"
+              name="name"
+              type="text"
+              autocomplete="given-name"
+              placeholder="How should we call you?"
+              required
+              aria-required="true"
+            />
+          </div>
+
+          <div class="field">
+            <label for="coupleCode">Shared code</label>
+            <input
+              id="coupleCode"
+              name="code"
+              type="text"
+              autocomplete="current-password"
+              placeholder="Your secret word or phrase"
+              required
+              aria-required="true"
+            />
+            <span class="field-hint">Both of you should use the same code to share the same space.</span>
+          </div>
+
+          <p class="form-error" id="loginError" role="alert" aria-live="assertive"></p>
+
+          <button class="btn-enter" type="submit" id="loginSubmitBtn">
+            <span class="btn-label">Open our space</span>
+            <span class="btn-loader" aria-hidden="true"></span>
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════
+         APP VIEW
+    ════════════════════════════════════════════════════ -->
+    <div class="view app-view hidden" id="appView">
+
+      <!-- Header -->
+      <header class="app-header">
+        <div class="app-header-inner">
+          <div class="app-wordmark">
+            <span class="app-logo">Share<em>Link</em></span>
+            <span class="space-name" id="spaceLabel" aria-label="Current user"></span>
+          </div>
+          <button class="btn-switch" id="logoutButton" type="button" aria-label="Sign out and switch user">
+            Switch
+          </button>
+        </div>
+      </header>
+
+      <!-- Composer -->
+      <section class="composer-section" aria-label="Add a new link">
+        <form id="linkForm" novalidate>
+          <input type="hidden" id="editingId" />
+
+          <div class="composer-row">
+            <input
+              class="url-input"
+              id="urlInput"
+              name="url"
+              type="url"
+              inputmode="url"
+              autocomplete="off"
+              placeholder="Paste a link to save…"
+              required
+              aria-required="true"
+              aria-label="URL"
+            />
+            <button class="btn-save" id="saveButton" type="submit">
+              <span class="btn-label" id="saveBtnLabel">Save</span>
+              <span class="btn-loader" aria-hidden="true"></span>
+            </button>
+          </div>
+
+          <!-- Expanded fields — shown after URL focused or in edit mode -->
+          <div class="composer-extra" id="composerExtra">
+            <div class="field-row">
+              <div class="field field--small">
+                <label for="titleInput">Title <span class="optional">optional</span></label>
+                <input
+                  id="titleInput"
+                  name="title"
+                  type="text"
+                  placeholder="Auto-fetched if blank"
+                  aria-label="Custom title (optional)"
+                />
+              </div>
             </div>
-            <label>
-              <span class="label">Note</span>
-              <textarea id="noteInput" name="note" rows="3" placeholder="Optional"></textarea>
-            </label>
-            <p class="error" id="linkError" role="alert"></p>
-            <div class="composer-actions">
-              <button class="primary-button" id="saveButton" type="submit">Save link</button>
-              <button class="ghost-button hidden" id="cancelEditButton" type="button">Cancel</button>
+            <div class="field">
+              <label for="noteInput">Note <span class="optional">optional</span></label>
+              <textarea
+                id="noteInput"
+                name="note"
+                rows="2"
+                placeholder="A thought about this link…"
+                aria-label="Note (optional)"
+              ></textarea>
             </div>
-          </form>
-        </section>
 
-        <section class="list-header">
-          <h2>Saved links</h2>
-          <span id="linkCount">0</span>
-        </section>
-
-        <section class="empty-state hidden" id="emptyState">
-          <h2>No links yet</h2>
-          <p>Paste the first thing worth coming back to.</p>
-        </section>
-
-        <section class="link-list" id="linkList" aria-live="polite"></section>
+            <div class="composer-footer">
+              <p class="form-error" id="linkError" role="alert" aria-live="assertive"></p>
+              <button class="btn-cancel hidden" id="cancelEditButton" type="button">Discard edits</button>
+            </div>
+          </div>
+        </form>
       </section>
-    </main>
 
-    <template id="linkTemplate">
-      <article class="link-card">
-        <div class="link-main">
-          <a class="link-title" target="_blank" rel="noreferrer"></a>
-          <p class="link-url"></p>
-          <p class="link-note"></p>
-          <p class="link-meta"></p>
+      <!-- Status bar -->
+      <div class="list-status" id="listStatus" aria-live="polite"></div>
+
+      <!-- Empty state -->
+      <div class="empty-state hidden" id="emptyState">
+        <div class="empty-inner">
+          <span class="empty-glyph" aria-hidden="true">✦</span>
+          <h2>Nothing here yet</h2>
+          <p>Paste the first link above — a recipe, an article, a place you want to remember. Your partner will see it here too.</p>
         </div>
-        <div class="link-actions">
-          <a class="icon-button open-link" target="_blank" rel="noreferrer" aria-label="Open link" title="Open link">
-            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M14 3h7v7h-2V6.41l-9.29 9.3-1.42-1.42 9.3-9.29H14V3Z"/><path d="M5 5h6v2H7v10h10v-4h2v6H5V5Z"/></svg>
-          </a>
-          <button class="icon-button edit-link" type="button" aria-label="Edit link" title="Edit link">
-            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m4 17.25-.75 3.5 3.5-.75L18.81 7.94l-2.75-2.75L4 17.25Zm15.71-10.71a1 1 0 0 0 0-1.41l-.84-.84a1 1 0 0 0-1.41 0l-.7.7 2.75 2.75.2-.2Z"/></svg>
-          </button>
-          <button class="icon-button delete-link" type="button" aria-label="Delete link" title="Delete link">
-            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M8 4h8l1 2h4v2H3V6h4l1-2Zm1 6h2v8H9v-8Zm4 0h2v8h-2v-8ZM6 10h12l-1 10H7L6 10Z"/></svg>
-          </button>
-        </div>
-      </article>
+      </div>
+
+      <!-- Feed -->
+      <main class="feed" id="linkFeed" aria-label="Saved links"></main>
+
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════
+         TEMPLATES
+    ════════════════════════════════════════════════════ -->
+
+    <!-- Day group template -->
+    <template id="tplDayGroup">
+      <section class="day-group">
+        <h2 class="day-label"></h2>
+        <ol class="day-items" role="list"></ol>
+      </section>
     </template>
+
+    <!-- Link item template -->
+    <template id="linkTemplate">
+      <li class="link-item" role="listitem">
+        <div class="link-attribution">
+          <span class="saver-dot" aria-hidden="true"></span>
+        </div>
+        <div class="link-body">
+          <a class="link-title" target="_blank" rel="noreferrer noopener"></a>
+          <span class="link-domain"></span>
+          <p class="link-note"></p>
+          <span class="link-meta"></span>
+        </div>
+        <div class="link-controls">
+          <button class="ctrl-btn edit-link hidden" type="button" aria-label="Edit this link" title="Edit">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+          <button class="ctrl-btn delete-link hidden" type="button" aria-label="Delete this link" title="Delete">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+          </button>
+        </div>
+      </li>
+    </template>
+
+    <!-- Delete confirm dialog -->
+    <dialog class="confirm-dialog" id="confirmDialog">
+      <form method="dialog">
+        <p class="confirm-msg" id="confirmMsg"></p>
+        <div class="confirm-actions">
+          <button class="btn-cancel-sm" value="cancel">Keep it</button>
+          <button class="btn-delete" value="confirm">Delete</button>
+        </div>
+      </form>
+    </dialog>
 
     <script src="/app.js" type="module"></script>
   </body>
