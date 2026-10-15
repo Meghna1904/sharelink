@@ -2,13 +2,12 @@ import { createHmac } from "node:crypto";
 import { extname, join, normalize, resolve } from "node:path";
 import { readFile } from "node:fs/promises";
 import { createServer as createHttpServer, IncomingMessage, ServerResponse } from "node:http";
-import { openDatabase, type DbClient, type Couple, type Link, type LinkReaction, type LinkComment } from "./db.js";
+import { openDatabase, type DbClient, type Couple, type Link } from "./db.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
 const PUBLIC_DIR = resolve("public");
 const MAX_BODY_BYTES = 1_000_000;
-const REACTION_EMOJIS = ["👍", "❤️", "😂", "🎉"];
 const MIME_TYPES = new Map<string, string>([
   [".html", "text/html; charset=utf-8"],
   [".css", "text/css; charset=utf-8"],
@@ -123,15 +122,7 @@ async function routeApi(
       WHERE couple_id = $1
       ORDER BY created_at DESC, id DESC
     `, [auth.couple.id]);
-    const reactions = await ctx.db.all<{ linkId: number; emoji: string; partnerName: string }>(`
-      SELECT link_id AS "linkId", emoji, partner_name AS "partnerName"
-      FROM link_reactions WHERE couple_id = $1
-    `, [auth.couple.id]);
-    const comments = await ctx.db.all<{ linkId: number; partnerName: string; text: string; createdAt: string }>(`
-      SELECT link_id AS "linkId", partner_name AS "partnerName", text, created_at AS "createdAt"
-      FROM link_comments WHERE couple_id = $1 ORDER BY created_at ASC
-    `, [auth.couple.id]);
-    sendJson(res, 200, { links: rows.map((link) => attachSocial(link, reactions, comments, auth.name)) });
+    sendJson(res, 200, { links: rows });
     return;
   }
 
@@ -200,49 +191,6 @@ async function routeApi(
   const match = url.pathname.match(/^\/api\/links\/(\d+)$/);
   if (match) {
     const id = Number(match[1]);
-
-    if (req.method === "POST" && url.searchParams.get("action") === "reaction") {
-      const existing = await getLink(ctx.db, auth.couple.id, id);
-      if (!existing) { sendJson(res, 404, { error: "Link not found." }); return; }
-      const emoji = url.searchParams.get("emoji") ?? "";
-      if (!REACTION_EMOJIS.includes(emoji)) {
-        sendJson(res, 400, { error: "Choose one of the available reactions." });
-        return;
-      }
-      const current = await ctx.db.get<{ id: number }>(
-        "SELECT id FROM link_reactions WHERE link_id = $1 AND couple_id = $2 AND partner_name = $3 AND emoji = $4",
-        [id, auth.couple.id, auth.name, emoji]
-      );
-      if (current) {
-        await ctx.db.query(
-          "DELETE FROM link_reactions WHERE link_id = $1 AND couple_id = $2 AND partner_name = $3 AND emoji = $4",
-          [id, auth.couple.id, auth.name, emoji]
-        );
-      } else {
-        await ctx.db.query(
-          "INSERT INTO link_reactions (couple_id, link_id, partner_name, emoji) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
-          [auth.couple.id, id, auth.name, emoji]
-        );
-      }
-      sendJson(res, 200, { link: await getLinkWithSocial(ctx.db, auth.couple.id, id, auth.name) });
-      return;
-    }
-
-    if (req.method === "POST" && url.searchParams.get("action") === "comment") {
-      const existing = await getLink(ctx.db, auth.couple.id, id);
-      if (!existing) { sendJson(res, 404, { error: "Link not found." }); return; }
-      const text = (url.searchParams.get("text") ?? "").trim();
-      if (!text || text.length > 500) {
-        sendJson(res, 400, { error: "Comments must be between 1 and 500 characters." });
-        return;
-      }
-      await ctx.db.query(
-        "INSERT INTO link_comments (couple_id, link_id, partner_name, text) VALUES ($1, $2, $3, $4)",
-        [auth.couple.id, id, auth.name, text]
-      );
-      sendJson(res, 201, { link: await getLinkWithSocial(ctx.db, auth.couple.id, id, auth.name) });
-      return;
-    }
 
     if (req.method === "GET") {
       const existing = await getLink(ctx.db, auth.couple.id, id);
@@ -444,46 +392,6 @@ async function getLink(db: DbClient, coupleId: number, linkId: number): Promise<
     FROM links
     WHERE id = $1 AND couple_id = $2
   `, [linkId, coupleId]);
-}
-
-async function getLinkWithSocial(db: DbClient, coupleId: number, linkId: number, viewer: string): Promise<Link | undefined> {
-  const link = await getLink(db, coupleId, linkId);
-  if (!link) return undefined;
-  const reactions = await db.all<{ linkId: number; emoji: string; partnerName: string }>(`
-    SELECT link_id AS "linkId", emoji, partner_name AS "partnerName"
-    FROM link_reactions WHERE couple_id = $1
-  `, [coupleId]);
-  const comments = await db.all<LinkComment & { linkId: number }>(`
-    SELECT link_id AS "linkId", partner_name AS "partnerName", text, created_at AS "createdAt"
-    FROM link_comments WHERE couple_id = $1 ORDER BY created_at ASC
-  `, [coupleId]);
-  return attachSocial(link, reactions, comments, viewer);
-}
-
-function attachSocial<T extends { id: number }>(
-  link: T,
-  reactionRows: Array<{ linkId: number; emoji: string; partnerName: string }>,
-  commentRows: Array<LinkComment & { linkId: number }>,
-  viewer: string
-): T & { reactions: LinkReaction[]; comments: LinkComment[] } {
-  const linkReactions = reactionRows.filter((reaction) => reaction.linkId === link.id);
-  const grouped = new Map<string, string[]>();
-  for (const reaction of linkReactions) {
-    const partners = grouped.get(reaction.emoji) ?? [];
-    partners.push(reaction.partnerName);
-    grouped.set(reaction.emoji, partners);
-  }
-  return {
-    ...link,
-    reactions: [...grouped.entries()].map(([emoji, partners]) => ({
-      emoji,
-      count: partners.length,
-      mine: partners.includes(viewer),
-    })),
-    comments: commentRows
-      .filter((comment) => comment.linkId === link.id)
-      .map(({ partnerName, text, createdAt }) => ({ partnerName, text, createdAt })),
-  };
 }
 
 function canonicalizeUrl(value: string): string {

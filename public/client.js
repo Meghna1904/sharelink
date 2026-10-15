@@ -83,7 +83,6 @@ function wireEvents() {
 
   // Delegate edit / delete clicks on the feed
   el.linkFeed.addEventListener("click", onFeedClick);
-  el.linkFeed.addEventListener("submit", onCommentSubmit);
   el.searchInput.addEventListener("input", renderFeed);
   el.favoritesFilter.addEventListener("click", () => {
     favoritesOnly = !favoritesOnly;
@@ -277,8 +276,6 @@ function buildLinkItem(link, index = 0) {
   const previewSite = frag.querySelector(".preview-site");
   const previewDescription = frag.querySelector(".preview-description");
   const tags = frag.querySelector(".link-tags");
-  const reactionList = frag.querySelector(".reaction-list");
-  const commentList = frag.querySelector(".comment-list");
 
   item.dataset.id = link.id;
 
@@ -343,33 +340,6 @@ function buildLinkItem(link, index = 0) {
 
   meta.append(saverSpan, sep, timeSpan);
 
-  const reactions = Array.isArray(link.reactions) ? link.reactions : [];
-  for (const emoji of ["👍", "❤️", "😂", "🎉"]) {
-    const reaction = reactions.find((entry) => entry.emoji === emoji);
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "reaction-button";
-    button.dataset.emoji = emoji;
-    button.textContent = reaction?.count ? `${emoji} ${reaction.count}` : emoji;
-    button.setAttribute("aria-pressed", String(Boolean(reaction?.mine)));
-    button.setAttribute("aria-label", `${emoji} reaction${reaction?.count ? `, ${reaction.count}` : ""}`);
-    reactionList.append(button);
-  }
-
-  const comments = Array.isArray(link.comments) ? link.comments : [];
-  for (const comment of comments) {
-    const row = document.createElement("div");
-    row.className = "link-comment";
-    const author = document.createElement("strong");
-    author.className = "comment-author";
-    author.textContent = comment.partnerName;
-    const text = document.createElement("span");
-    text.className = "comment-text";
-    text.textContent = comment.text;
-    row.append(author, text);
-    commentList.append(row);
-  }
-
   // Controls — only for the saver
   const isMine = link.saverName === session.name;
   favoriteBtn.textContent = link.isFavorite ? "★" : "☆";
@@ -389,43 +359,12 @@ async function onFeedClick(e) {
   const editBtn = e.target.closest(".edit-link");
   const delBtn  = e.target.closest(".delete-link");
   const favoriteBtn = e.target.closest(".favorite-link");
-  const reactionBtn = e.target.closest(".reaction-button");
   const item    = e.target.closest(".link-item");
 
   if (!item) return;
 
   const link = session.links.find((l) => l.id === Number(item.dataset.id));
   if (!link) return;
-
-  if (reactionBtn) {
-    const emoji = reactionBtn.dataset.emoji;
-    if (!emoji) return;
-    const previousReactions = Array.isArray(link.reactions) ? structuredClone(link.reactions) : [];
-    const existing = previousReactions.find((reaction) => reaction.emoji === emoji);
-    if (existing?.mine) {
-      existing.mine = false;
-      existing.count--;
-      link.reactions = previousReactions.filter((reaction) => reaction.count > 0);
-    } else if (existing) {
-      existing.mine = true;
-      existing.count++;
-      link.reactions = previousReactions;
-    } else {
-      link.reactions = [...previousReactions, { emoji, count: 1, mine: true }];
-    }
-    renderFeed();
-    try {
-      const result = await api(`/api/links/${link.id}?action=reaction&emoji=${encodeURIComponent(emoji)}`, { method: "POST" });
-      const index = session.links.findIndex((entry) => entry.id === link.id);
-      if (index !== -1) session.links[index] = result.link;
-      renderFeed();
-    } catch (err) {
-      link.reactions = previousReactions;
-      renderFeed();
-      showStatusError(err.message || "Could not save reaction.");
-    }
-    return;
-  }
 
   if (favoriteBtn) {
     favoriteBtn.disabled = true;
@@ -480,28 +419,6 @@ async function onFeedClick(e) {
     } catch (err) {
       showStatusError(err.message || "Could not delete. Please try again.");
     }
-  }
-}
-
-async function onCommentSubmit(e) {
-  const form = e.target.closest(".comment-form");
-  if (!form) return;
-  e.preventDefault();
-  const item = form.closest(".link-item");
-  const input = form.querySelector(".comment-input");
-  const text = input.value.trim();
-  if (!item || !text) return;
-  const link = session.links.find((entry) => entry.id === Number(item.dataset.id));
-  if (!link) return;
-  const params = new URLSearchParams({ action: "comment", text });
-  try {
-    const result = await api(`/api/links/${link.id}?${params}`, { method: "POST" });
-    const index = session.links.findIndex((entry) => entry.id === link.id);
-    if (index !== -1) session.links[index] = result.link;
-    renderFeed();
-    setStatus("Comment added.");
-  } catch (err) {
-    showStatusError(err.message || "Could not add comment.");
   }
 }
 
