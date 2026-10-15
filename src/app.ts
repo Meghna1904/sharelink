@@ -193,6 +193,19 @@ async function routeApi(
       const existing = await getLink(ctx.db, auth.couple.id, id);
       if (!existing) { sendJson(res, 404, { error: "Link not found." }); return; }
 
+      // The Vercel adapter may not expose a streamed JSON body to this Node
+      // handler. Accept the favorite value in the query string as well.
+      const favoriteParam = url.searchParams.get("favorite");
+      if (favoriteParam === "true" || favoriteParam === "false") {
+        const isFavorite = favoriteParam === "true";
+        await ctx.db.query(
+          "UPDATE links SET is_favorite = $1, updated_at = NOW() WHERE id = $2 AND couple_id = $3",
+          [isFavorite, id, auth.couple.id]
+        );
+        sendJson(res, 200, { link: await getLink(ctx.db, auth.couple.id, id) });
+        return;
+      }
+
       const body = await readJsonBody(req) as Record<string, unknown> | null;
       if (typeof body?.["isFavorite"] === "boolean") {
         await ctx.db.query(

@@ -372,10 +372,10 @@ async function onFeedClick(e) {
     link.isFavorite = !previousFavorite;
     renderFeed();
     try {
-      const result = await api(`/api/links/${link.id}`, {
-        method: "PATCH",
-        body: { isFavorite: link.isFavorite },
-      });
+      const result = await api(
+        `/api/links/${link.id}?favorite=${link.isFavorite}`,
+        { method: "PATCH" }
+      );
       const index = session.links.findIndex((entry) => entry.id === link.id);
       if (index !== -1) session.links[index] = result.link;
       renderFeed();
