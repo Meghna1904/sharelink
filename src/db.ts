@@ -15,6 +15,20 @@ export interface Link {
   previewImage: string | null;
   description: string;
   siteName: string;
+  reactions?: LinkReaction[];
+  comments?: LinkComment[];
+}
+
+export interface LinkReaction {
+  emoji: string;
+  count: number;
+  mine: boolean;
+}
+
+export interface LinkComment {
+  partnerName: string;
+  text: string;
+  createdAt: string;
 }
 
 export interface Couple {
@@ -78,6 +92,25 @@ export function openDatabase(connectionString?: string): DbClient {
 
       CREATE INDEX IF NOT EXISTS idx_links_couple_created
         ON links (couple_id, created_at DESC, id DESC);
+
+      CREATE TABLE IF NOT EXISTS link_reactions (
+        id SERIAL PRIMARY KEY,
+        couple_id INTEGER NOT NULL REFERENCES couples(id) ON DELETE CASCADE,
+        link_id INTEGER NOT NULL REFERENCES links(id) ON DELETE CASCADE,
+        partner_name TEXT NOT NULL,
+        emoji TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        UNIQUE (link_id, partner_name, emoji)
+      );
+
+      CREATE TABLE IF NOT EXISTS link_comments (
+        id SERIAL PRIMARY KEY,
+        couple_id INTEGER NOT NULL REFERENCES couples(id) ON DELETE CASCADE,
+        link_id INTEGER NOT NULL REFERENCES links(id) ON DELETE CASCADE,
+        partner_name TEXT NOT NULL,
+        text TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
     `);
     initialized = true;
   }
@@ -127,6 +160,8 @@ function createMemoryDb(): DbClient {
 
   const couples: CoupleRow[] = [];
   const links: LinkRow[] = [];
+  const reactions: Array<{ couple_id: number; link_id: number; partner_name: string; emoji: string; created_at: string }> = [];
+  const comments: Array<{ couple_id: number; link_id: number; partner_name: string; text: string; created_at: string }> = [];
   let coupleIdSeq = 1;
   let linkIdSeq = 1;
 
@@ -137,6 +172,18 @@ function createMemoryDb(): DbClient {
         if (!couples.some((c) => c.code_hash === codeHash)) {
           couples.push({ id: coupleIdSeq++, code_hash: codeHash, created_at: new Date().toISOString() });
         }
+      } else if (text.includes("INSERT INTO link_reactions")) {
+        const [coupleId, linkId, partnerName, emoji] = params;
+        if (!reactions.some((r) => r.link_id === Number(linkId) && r.partner_name === String(partnerName) && r.emoji === String(emoji))) {
+          reactions.push({ couple_id: Number(coupleId), link_id: Number(linkId), partner_name: String(partnerName), emoji: String(emoji), created_at: new Date().toISOString() });
+        }
+      } else if (text.includes("DELETE FROM link_reactions")) {
+        const [linkId, coupleId, partnerName, emoji] = params;
+        const idx = reactions.findIndex((r) => r.link_id === Number(linkId) && r.couple_id === Number(coupleId) && r.partner_name === String(partnerName) && r.emoji === String(emoji));
+        if (idx !== -1) reactions.splice(idx, 1);
+      } else if (text.includes("INSERT INTO link_comments")) {
+        const [coupleId, linkId, partnerName, commentText] = params;
+        comments.push({ couple_id: Number(coupleId), link_id: Number(linkId), partner_name: String(partnerName), text: String(commentText), created_at: new Date().toISOString() });
       } else if (text.includes("UPDATE links")) {
         if (text.includes("SET is_favorite")) {
           const [isFavorite, id, coupleId] = params;
@@ -158,10 +205,42 @@ function createMemoryDb(): DbClient {
         const idx = links.findIndex((l) => l.id === Number(id) && l.couple_id === Number(coupleId));
         if (idx !== -1) {
           links.splice(idx, 1);
+          for (let i = reactions.length - 1; i >= 0; i--) {
+            if (reactions[i]!.link_id === Number(id)) reactions.splice(i, 1);
+          }
+          for (let i = comments.length - 1; i >= 0; i--) {
+            if (comments[i]!.link_id === Number(id)) comments.splice(i, 1);
+          }
         }
       }
     },
     async all<T = Record<string, unknown>>(text: string, params: unknown[] = []): Promise<T[]> {
+      if (text.includes("FROM link_reactions")) {
+        const coupleId = Number(params[0]);
+        const linkId = text.includes("WHERE link_id = $1") ? Number(params[0]) : undefined;
+        const filterCoupleId = linkId === undefined ? coupleId : Number(params[1]);
+        const matching = reactions.filter((r) => r.couple_id === filterCoupleId && (linkId === undefined || r.link_id === linkId));
+        if (text.includes("COUNT(*)")) {
+          const viewer = String(params[2] ?? "");
+          const grouped = new Map<string, typeof matching>();
+          for (const reaction of matching) {
+            const group = grouped.get(reaction.emoji) ?? [];
+            group.push(reaction);
+            grouped.set(reaction.emoji, group);
+          }
+          return [...grouped.entries()].map(([emoji, entries]) => ({
+            emoji, count: entries.length, mine: entries.some((r) => r.partner_name === viewer),
+          })) as unknown as T[];
+        }
+        return matching.map((r) => ({ linkId: r.link_id, emoji: r.emoji, partnerName: r.partner_name })) as unknown as T[];
+      }
+      if (text.includes("FROM link_comments")) {
+        const linkId = text.includes("WHERE link_id = $1") ? Number(params[0]) : undefined;
+        const coupleId = Number(linkId === undefined ? params[0] : params[1]);
+        return comments
+          .filter((c) => c.couple_id === coupleId && (linkId === undefined || c.link_id === linkId))
+          .map((c) => ({ linkId: c.link_id, partnerName: c.partner_name, text: c.text, createdAt: c.created_at })) as unknown as T[];
+      }
       if (text.includes("FROM links") && text.includes("WHERE couple_id = $1")) {
         const coupleId = Number(params[0]);
         const matching = links
@@ -190,6 +269,11 @@ function createMemoryDb(): DbClient {
         const codeHash = String(params[0]);
         const c = couples.find((row) => row.code_hash === codeHash);
         return c ? ({ id: c.id } as unknown as T) : undefined;
+      }
+      if (text.includes("SELECT id FROM link_reactions")) {
+        const [linkId, coupleId, partnerName, emoji] = params;
+        const reaction = reactions.find((r) => r.link_id === Number(linkId) && r.couple_id === Number(coupleId) && r.partner_name === String(partnerName) && r.emoji === String(emoji));
+        return reaction ? ({ id: 1 } as unknown as T) : undefined;
       }
       if (text.includes("INSERT INTO links") && text.includes("RETURNING id")) {
         const [coupleId, url, title, note, saverName, tags, previewImage, description, siteName] = params;
