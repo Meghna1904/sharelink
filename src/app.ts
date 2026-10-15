@@ -192,12 +192,22 @@ async function routeApi(
     if (req.method === "PATCH") {
       const existing = await getLink(ctx.db, auth.couple.id, id);
       if (!existing) { sendJson(res, 404, { error: "Link not found." }); return; }
+
+      const body = await readJsonBody(req) as Record<string, unknown> | null;
+      if (typeof body?.["isFavorite"] === "boolean") {
+        await ctx.db.query(
+          "UPDATE links SET is_favorite = $1, updated_at = NOW() WHERE id = $2 AND couple_id = $3",
+          [body["isFavorite"], id, auth.couple.id]
+        );
+        sendJson(res, 200, { link: await getLink(ctx.db, auth.couple.id, id) });
+        return;
+      }
+
       if (existing.saverName !== auth.name) {
         sendJson(res, 403, { error: "Only the partner who saved this link can edit it." });
         return;
       }
 
-      const body = await readJsonBody(req);
       const parsed = validateLinkBody(body, { requireUrl: false });
       if (!parsed.ok) { sendJson(res, 400, { error: parsed.error }); return; }
 

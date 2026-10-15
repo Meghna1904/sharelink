@@ -368,18 +368,22 @@ async function onFeedClick(e) {
 
   if (favoriteBtn) {
     favoriteBtn.disabled = true;
+    const previousFavorite = Boolean(link.isFavorite);
+    link.isFavorite = !previousFavorite;
+    renderFeed();
     try {
-      const result = await api(`/api/links/${link.id}/favorite`, {
-        method: "POST",
-        body: { isFavorite: !link.isFavorite },
+      const result = await api(`/api/links/${link.id}`, {
+        method: "PATCH",
+        body: { isFavorite: link.isFavorite },
       });
       const index = session.links.findIndex((entry) => entry.id === link.id);
       if (index !== -1) session.links[index] = result.link;
       renderFeed();
+      setStatus(result.link.isFavorite ? "Added to favorites." : "Removed from favorites.");
     } catch (err) {
+      link.isFavorite = previousFavorite;
+      renderFeed();
       showStatusError(err.message || "Could not update favorite.");
-    } finally {
-      favoriteBtn.disabled = false;
     }
     return;
   }
