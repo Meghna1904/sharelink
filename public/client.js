@@ -435,7 +435,13 @@ async function onFeedClick(e) {
     try {
       const result = await api(
         `/api/links/${link.id}?favorite=${link.isFavorite}`,
-        { method: "PATCH" }
+        {
+          method: "PATCH",
+          headers: {
+            "x-sharelink-action": "favorite",
+            "x-sharelink-favorite": String(link.isFavorite),
+          },
+        }
       );
       const index = session.links.findIndex((entry) => entry.id === link.id);
       if (index !== -1) session.links[index] = result.link;
@@ -646,7 +652,7 @@ function setInputInvalid(input, invalid) {
 
 /* ── API ──────────────────────────────────────────────────────────────── */
 async function api(path, opts = {}) {
-  const headers = { "content-type": "application/json" };
+  const headers = { "content-type": "application/json", ...(opts.headers ?? {}) };
 
   if (opts.includeAuth !== false) {
     headers["x-partner-name"] = session.name;

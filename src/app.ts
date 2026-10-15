@@ -257,7 +257,14 @@ async function routeApi(
 
       // The Vercel adapter may not expose a streamed JSON body to this Node
       // handler. Accept the favorite value in the query string as well.
-      const favoriteParam = url.searchParams.get("favorite");
+      const vercelQuery = (req as IncomingMessage & { query?: Record<string, unknown> }).query;
+      const headerFavorite = req.headers["x-sharelink-favorite"];
+      const favoriteParam =
+        req.headers["x-sharelink-action"] === "favorite" &&
+        (headerFavorite === "true" || headerFavorite === "false")
+          ? headerFavorite
+          : url.searchParams.get("favorite") ??
+            (typeof vercelQuery?.["favorite"] === "string" ? vercelQuery["favorite"] : null);
       if (favoriteParam === "true" || favoriteParam === "false") {
         const isFavorite = favoriteParam === "true";
         await ctx.db.query(
