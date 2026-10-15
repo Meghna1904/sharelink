@@ -10,6 +10,11 @@ export interface Link {
   saverName: string;
   createdAt: string;
   updatedAt: string;
+  tags: string[];
+  isFavorite: boolean;
+  previewImage: string | null;
+  description: string;
+  siteName: string;
 }
 
 export interface Couple {
@@ -56,9 +61,20 @@ export function openDatabase(connectionString?: string): DbClient {
         title      TEXT    NOT NULL,
         note       TEXT    NOT NULL DEFAULT '',
         saver_name TEXT    NOT NULL,
+        tags       TEXT[]  NOT NULL DEFAULT '{}',
+        is_favorite BOOLEAN NOT NULL DEFAULT FALSE,
+        preview_image TEXT,
+        description TEXT NOT NULL DEFAULT '',
+        site_name TEXT NOT NULL DEFAULT '',
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMP NOT NULL DEFAULT NOW()
       );
+
+      ALTER TABLE links ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
+      ALTER TABLE links ADD COLUMN IF NOT EXISTS is_favorite BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE links ADD COLUMN IF NOT EXISTS preview_image TEXT;
+      ALTER TABLE links ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
+      ALTER TABLE links ADD COLUMN IF NOT EXISTS site_name TEXT NOT NULL DEFAULT '';
 
       CREATE INDEX IF NOT EXISTS idx_links_couple_created
         ON links (couple_id, created_at DESC, id DESC);
@@ -100,6 +116,11 @@ function createMemoryDb(): DbClient {
     title: string;
     note: string;
     saver_name: string;
+    tags: string[];
+    is_favorite: boolean;
+    preview_image: string | null;
+    description: string;
+    site_name: string;
     created_at: string;
     updated_at: string;
   }
@@ -117,12 +138,19 @@ function createMemoryDb(): DbClient {
           couples.push({ id: coupleIdSeq++, code_hash: codeHash, created_at: new Date().toISOString() });
         }
       } else if (text.includes("UPDATE links")) {
-        const [nextUrl, nextTitle, nextNote, id, coupleId] = params;
+        if (text.includes("SET is_favorite")) {
+          const [isFavorite, id, coupleId] = params;
+          const link = links.find((l) => l.id === Number(id) && l.couple_id === Number(coupleId));
+          if (link) link.is_favorite = Boolean(isFavorite);
+          return;
+        }
+        const [nextUrl, nextTitle, nextNote, tags, id, coupleId] = params;
         const link = links.find((l) => l.id === Number(id) && l.couple_id === Number(coupleId));
         if (link) {
           link.url = String(nextUrl);
           link.title = String(nextTitle);
           link.note = String(nextNote);
+          link.tags = Array.isArray(tags) ? tags.map(String) : [];
           link.updated_at = new Date().toISOString();
         }
       } else if (text.includes("DELETE FROM links")) {
@@ -147,6 +175,11 @@ function createMemoryDb(): DbClient {
             saverName: l.saver_name,
             createdAt: l.created_at,
             updatedAt: l.updated_at,
+            tags: l.tags,
+            isFavorite: l.is_favorite,
+            previewImage: l.preview_image,
+            description: l.description,
+            siteName: l.site_name,
           }));
         return matching as unknown as T[];
       }
@@ -159,7 +192,7 @@ function createMemoryDb(): DbClient {
         return c ? ({ id: c.id } as unknown as T) : undefined;
       }
       if (text.includes("INSERT INTO links") && text.includes("RETURNING id")) {
-        const [coupleId, url, title, note, saverName] = params;
+        const [coupleId, url, title, note, saverName, tags, previewImage, description, siteName] = params;
         const newLink: LinkRow = {
           id: linkIdSeq++,
           couple_id: Number(coupleId),
@@ -167,6 +200,11 @@ function createMemoryDb(): DbClient {
           title: String(title),
           note: String(note ?? ""),
           saver_name: String(saverName),
+          tags: Array.isArray(tags) ? tags.map(String) : [],
+          is_favorite: false,
+          preview_image: previewImage ? String(previewImage) : null,
+          description: String(description ?? ""),
+          site_name: String(siteName ?? ""),
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
@@ -185,6 +223,11 @@ function createMemoryDb(): DbClient {
           saverName: l.saver_name,
           createdAt: l.created_at,
           updatedAt: l.updated_at,
+          tags: l.tags,
+          isFavorite: l.is_favorite,
+          previewImage: l.preview_image,
+          description: l.description,
+          siteName: l.site_name,
         } as unknown as T;
       }
       return undefined;

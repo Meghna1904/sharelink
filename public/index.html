@@ -155,6 +155,18 @@
               ></textarea>
             </div>
 
+            <div class="field">
+              <label for="tagsInput">Tags <span class="optional">optional, comma separated</span></label>
+              <input
+                id="tagsInput"
+                name="tags"
+                type="text"
+                placeholder="Recipes, places, gifts…"
+                aria-label="Tags (comma separated)"
+                maxlength="260"
+              />
+            </div>
+
             <div class="composer-footer">
               <p class="form-error" id="linkError" role="alert" aria-live="assertive"></p>
               <button class="btn-cancel hidden" id="cancelEditButton" type="button">
@@ -170,6 +182,16 @@
       <!-- ── Status bar ──────────────────────────────────────────── -->
       <div class="list-status" id="listStatus" aria-live="polite" aria-atomic="true"></div>
 
+      <section class="feed-toolbar" aria-label="Search and filter saved links">
+        <label class="search-wrap">
+          <span class="sr-only">Search links</span>
+          <input id="searchInput" class="search-input" type="search" placeholder="Search links, notes, and tags…" autocomplete="off" />
+        </label>
+        <button id="favoritesFilter" class="filter-button" type="button" aria-pressed="false">
+          <span aria-hidden="true">☆</span> Favorites
+        </button>
+      </section>
+
       <!-- ── Empty state ─────────────────────────────────────────── -->
       <div class="empty-state hidden" id="emptyState" aria-label="No links saved yet">
         <div class="empty-inner">
@@ -181,6 +203,7 @@
           </p>
         </div>
       </div>
+      <p id="noResults" class="no-results hidden" role="status">No links match this search.</p>
 
       <!-- ── Feed skeleton (shown while loading) ────────────────── -->
       <div class="feed" id="skeletonFeed" aria-hidden="true" style="padding-top:var(--sp-2)">
@@ -216,11 +239,25 @@
         <div class="link-body">
           <a class="link-title" target="_blank" rel="noreferrer noopener"></a>
           <span class="link-domain"></span>
+          <a class="site-preview hidden" target="_blank" rel="noreferrer noopener">
+            <img class="preview-image hidden" loading="lazy" referrerpolicy="no-referrer" alt="" />
+            <span class="preview-copy">
+              <span class="preview-site"></span>
+              <span class="preview-description"></span>
+            </span>
+          </a>
+          <div class="link-tags hidden" aria-label="Tags"></div>
           <p class="link-note"></p>
           <span class="link-meta"></span>
         </div>
         <!-- Edit / delete (only for saver) -->
         <div class="link-controls">
+          <button
+            class="ctrl-btn favorite-link"
+            type="button"
+            aria-label="Add to favorites"
+            title="Add to favorites"
+          >☆</button>
           <button
             class="ctrl-btn edit-link hidden"
             type="button"

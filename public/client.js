@@ -6,6 +6,7 @@
 
 /* ── Session state ────────────────────────────────────────────────────── */
 const session = { name: "", code: "", links: [] };
+let favoritesOnly = false;
 
 /* ── Partner color palette (cycled by insertion order of unique names) ── */
 const PARTNER_PALETTE = [
@@ -47,6 +48,7 @@ const el = {
   urlInput:         $("urlInput"),
   titleInput:       $("titleInput"),
   noteInput:        $("noteInput"),
+  tagsInput:        $("tagsInput"),
   linkError:        $("linkError"),
   saveButton:       $("saveButton"),
   saveBtnLabel:     $("saveBtnLabel"),
@@ -56,6 +58,9 @@ const el = {
   linkFeed:         $("linkFeed"),
   skeletonFeed:     $("skeletonFeed"),
   listStatus:       $("listStatus"),
+  searchInput:      $("searchInput"),
+  favoritesFilter:  $("favoritesFilter"),
+  noResults:        $("noResults"),
   confirmDialog:    $("confirmDialog"),
   confirmMsg:       $("confirmMsg"),
   tplDayGroup:      $("tplDayGroup"),
@@ -78,6 +83,13 @@ function wireEvents() {
 
   // Delegate edit / delete clicks on the feed
   el.linkFeed.addEventListener("click", onFeedClick);
+  el.searchInput.addEventListener("input", renderFeed);
+  el.favoritesFilter.addEventListener("click", () => {
+    favoritesOnly = !favoritesOnly;
+    el.favoritesFilter.setAttribute("aria-pressed", String(favoritesOnly));
+    el.favoritesFilter.querySelector("span").textContent = favoritesOnly ? "★" : "☆";
+    renderFeed();
+  });
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -116,6 +128,10 @@ function onLogout() {
   session.name  = "";
   session.code  = "";
   session.links = [];
+  favoritesOnly = false;
+  el.searchInput.value = "";
+  el.favoritesFilter.setAttribute("aria-pressed", "false");
+  el.favoritesFilter.querySelector("span").textContent = "☆";
   partnerColorMap.clear();
 
   el.appView.classList.add("hidden");
@@ -127,6 +143,7 @@ function onLogout() {
   el.linkFeed.textContent = "";
   el.skeletonFeed.textContent = "";
   el.emptyState.classList.add("hidden");
+  el.noResults.classList.add("hidden");
 
   requestAnimationFrame(() => el.partnerName.focus());
 }
@@ -197,12 +214,28 @@ async function loadLinks() {
 function renderFeed() {
   el.linkFeed.textContent = "";
   el.emptyState.classList.toggle("hidden", session.links.length > 0);
+  const query = el.searchInput.value.trim().toLocaleLowerCase();
+  const visibleLinks = session.links.filter((link) => {
+    if (favoritesOnly && !link.isFavorite) return false;
+    if (!query) return true;
+    const searchable = [
+      link.title, link.url, link.note, link.description, link.siteName,
+      ...(Array.isArray(link.tags) ? link.tags : []),
+    ].filter(Boolean).join(" ").toLocaleLowerCase();
+    return searchable.includes(query);
+  });
+  el.noResults.classList.toggle("hidden", session.links.length === 0 || visibleLinks.length > 0);
+  if (session.links.length > 0 && visibleLinks.length === 0) {
+    el.noResults.textContent = favoritesOnly && !query
+      ? "No favorites yet. Tap the star on a link to save it here."
+      : "No links match this search.";
+  }
 
-  if (!session.links.length) return;
+  if (!visibleLinks.length) return;
 
   // Group by calendar day
   const groups = new Map();
-  for (const link of session.links) {
+  for (const link of visibleLinks) {
     const key = toDayKey(link.createdAt);
     if (!groups.has(key)) {
       groups.set(key, { label: toDayLabel(link.createdAt), isRecent: isToday(link.createdAt), links: [] });
@@ -237,6 +270,12 @@ function buildLinkItem(link, index = 0) {
   const meta  = frag.querySelector(".link-meta");
   const editBtn = frag.querySelector(".edit-link");
   const delBtn  = frag.querySelector(".delete-link");
+  const favoriteBtn = frag.querySelector(".favorite-link");
+  const preview = frag.querySelector(".site-preview");
+  const previewImage = frag.querySelector(".preview-image");
+  const previewSite = frag.querySelector(".preview-site");
+  const previewDescription = frag.querySelector(".preview-description");
+  const tags = frag.querySelector(".link-tags");
 
   item.dataset.id = link.id;
 
@@ -256,6 +295,30 @@ function buildLinkItem(link, index = 0) {
   title.textContent = link.title || link.url;
   title.setAttribute("aria-label", `${link.title || link.url} — opens in new tab`);
   domain.textContent = domainOf(link.url);
+
+  if (link.previewImage || link.description || link.siteName) {
+    preview.href = link.url;
+    preview.classList.remove("hidden");
+    previewSite.textContent = link.siteName || domainOf(link.url);
+    previewDescription.textContent = link.description || "Open this link to see more.";
+    if (link.previewImage) {
+      previewImage.src = link.previewImage;
+      previewImage.alt = "";
+      previewImage.classList.remove("hidden");
+      previewImage.addEventListener("error", () => previewImage.classList.add("hidden"), { once: true });
+    }
+  }
+
+  const linkTags = Array.isArray(link.tags) ? link.tags : [];
+  if (linkTags.length) {
+    tags.classList.remove("hidden");
+    for (const tag of linkTags) {
+      const chip = document.createElement("span");
+      chip.className = "tag-chip";
+      chip.textContent = tag;
+      tags.append(chip);
+    }
+  }
 
   if (link.note) {
     note.textContent = link.note;
@@ -279,6 +342,10 @@ function buildLinkItem(link, index = 0) {
 
   // Controls — only for the saver
   const isMine = link.saverName === session.name;
+  favoriteBtn.textContent = link.isFavorite ? "★" : "☆";
+  favoriteBtn.setAttribute("aria-pressed", String(Boolean(link.isFavorite)));
+  favoriteBtn.setAttribute("aria-label", link.isFavorite ? "Remove from favorites" : "Add to favorites");
+  favoriteBtn.title = link.isFavorite ? "Remove from favorites" : "Add to favorites";
   editBtn.classList.toggle("hidden", !isMine);
   delBtn.classList.toggle("hidden", !isMine);
 
@@ -291,12 +358,31 @@ function buildLinkItem(link, index = 0) {
 async function onFeedClick(e) {
   const editBtn = e.target.closest(".edit-link");
   const delBtn  = e.target.closest(".delete-link");
+  const favoriteBtn = e.target.closest(".favorite-link");
   const item    = e.target.closest(".link-item");
 
   if (!item) return;
 
   const link = session.links.find((l) => l.id === Number(item.dataset.id));
   if (!link) return;
+
+  if (favoriteBtn) {
+    favoriteBtn.disabled = true;
+    try {
+      const result = await api(`/api/links/${link.id}/favorite`, {
+        method: "POST",
+        body: { isFavorite: !link.isFavorite },
+      });
+      const index = session.links.findIndex((entry) => entry.id === link.id);
+      if (index !== -1) session.links[index] = result.link;
+      renderFeed();
+    } catch (err) {
+      showStatusError(err.message || "Could not update favorite.");
+    } finally {
+      favoriteBtn.disabled = false;
+    }
+    return;
+  }
 
   if (editBtn) {
     startEdit(link);
@@ -342,6 +428,7 @@ async function onSaveLink(e) {
     url:   el.urlInput.value.trim(),
     title: el.titleInput.value.trim(),
     note:  el.noteInput.value.trim(),
+    tags:  el.tagsInput.value.split(",").map((tag) => tag.trim()).filter(Boolean),
   };
 
   const editingId = el.editingId.value;
@@ -358,7 +445,7 @@ async function onSaveLink(e) {
 
   // Show fetching hint when no custom title
   if (!editingId && !body.title) {
-    setStatus("Fetching page title…", true);
+    setStatus("Fetching website preview…", true);
   }
 
   await withBusy(el.saveButton, async () => {
@@ -376,6 +463,7 @@ function startEdit(link) {
   el.urlInput.value   = link.url;
   el.titleInput.value = link.title;
   el.noteInput.value  = link.note ?? "";
+  el.tagsInput.value  = Array.isArray(link.tags) ? link.tags.join(", ") : "";
   el.saveBtnLabel.textContent = "Save changes";
   el.cancelEditButton.classList.remove("hidden");
   expandComposer();

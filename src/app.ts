@@ -18,14 +18,21 @@ const MIME_TYPES = new Map<string, string>([
 
 // ── Public types ──────────────────────────────────────────────────────────
 
-export type TitleFetcher = (url: string) => Promise<string>;
+export interface PageMetadata {
+  title: string;
+  description: string;
+  image: string;
+  siteName: string;
+}
+
+export type MetadataFetcher = (url: string) => Promise<PageMetadata>;
 
 export interface AppOptions {
   db?: DbClient;
   /** Pass a connection string directly (used in tests). */
   dbPath?: string;
   publicDir?: string;
-  titleFetcher?: TitleFetcher;
+  metadataFetcher?: MetadataFetcher;
   codeSecret?: string;
 }
 
@@ -39,7 +46,7 @@ export type AppHandler = {
 export function createApp(options: AppOptions = {}): AppHandler {
   const db = options.db ?? openDatabase(options.dbPath);
   const publicDir = options.publicDir ? resolve(options.publicDir) : PUBLIC_DIR;
-  const titleFetcher = options.titleFetcher ?? fetchPageTitle;
+  const metadataFetcher = options.metadataFetcher ?? fetchPageMetadata;
   const codeSecret =
     options.codeSecret ?? process.env["CODE_HASH_SECRET"] ?? "local-development-secret";
 
@@ -48,7 +55,7 @@ export function createApp(options: AppOptions = {}): AppHandler {
       const url = new URL(req.url ?? "/", `http://${req.headers["host"] ?? "localhost"}`);
 
       if (url.pathname.startsWith("/api/")) {
-        await routeApi(req, res, url, { db, titleFetcher, codeSecret });
+        await routeApi(req, res, url, { db, metadataFetcher, codeSecret });
         return;
       }
 
@@ -71,7 +78,7 @@ export function createServer(options: AppOptions = {}) {
 
 interface RouteContext {
   db: DbClient;
-  titleFetcher: TitleFetcher;
+  metadataFetcher: MetadataFetcher;
   codeSecret: string;
 }
 
@@ -104,7 +111,10 @@ async function routeApi(
   // GET /api/links
   if (req.method === "GET" && url.pathname === "/api/links") {
     const rows = await ctx.db.all<Link>(`
-      SELECT id, url, title, note,
+      SELECT id, url, title, note, tags,
+             is_favorite AS "isFavorite",
+             preview_image AS "previewImage",
+             description, site_name AS "siteName",
              saver_name  AS "saverName",
              created_at  AS "createdAt",
              updated_at  AS "updatedAt"
@@ -124,12 +134,25 @@ async function routeApi(
       sendJson(res, 400, { error: parsed.error });
       return;
     }
-    const title = parsed.title || (await ctx.titleFetcher(parsed.url!)) || parsed.url!;
+    const metadata = await ctx.metadataFetcher(parsed.url!);
+    const title = parsed.title || metadata.title || parsed.url!;
     const row = await ctx.db.get<{ id: number }>(`
-      INSERT INTO links (couple_id, url, title, note, saver_name)
-      VALUES ($1, $2, $3, $4, $5)
+      INSERT INTO links (
+        couple_id, url, title, note, saver_name, tags, preview_image, description, site_name
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING id
-    `, [auth.couple.id, parsed.url, title, parsed.note ?? "", auth.name]);
+    `, [
+      auth.couple.id,
+      parsed.url,
+      title,
+      parsed.note ?? "",
+      auth.name,
+      parsed.tags ?? [],
+      normalizeUrl(metadata.image) ?? null,
+      normalizeText(metadata.description, 400) ?? "",
+      normalizeText(metadata.siteName, 100) ?? "",
+    ]);
 
     const link = await getLink(ctx.db, auth.couple.id, row!.id);
     sendJson(res, 201, { link });
@@ -137,6 +160,24 @@ async function routeApi(
   }
 
   // GET /api/links/:id  or  PATCH /api/links/:id  or  DELETE /api/links/:id
+  const favoriteMatch = url.pathname.match(/^\/api\/links\/(\d+)\/favorite$/);
+  if (favoriteMatch && req.method === "POST") {
+    const id = Number(favoriteMatch[1]);
+    const existing = await getLink(ctx.db, auth.couple.id, id);
+    if (!existing) { sendJson(res, 404, { error: "Link not found." }); return; }
+    const body = await readJsonBody(req) as Record<string, unknown> | null;
+    if (typeof body?.["isFavorite"] !== "boolean") {
+      sendJson(res, 400, { error: "Choose whether this link is a favorite." });
+      return;
+    }
+    await ctx.db.query(
+      "UPDATE links SET is_favorite = $1, updated_at = NOW() WHERE id = $2 AND couple_id = $3",
+      [body["isFavorite"], id, auth.couple.id]
+    );
+    sendJson(res, 200, { link: await getLink(ctx.db, auth.couple.id, id) });
+    return;
+  }
+
   const match = url.pathname.match(/^\/api\/links\/(\d+)$/);
   if (match) {
     const id = Number(match[1]);
@@ -163,11 +204,12 @@ async function routeApi(
       const nextUrl   = parsed.url   ?? existing.url;
       const nextTitle = parsed.title ?? existing.title;
       const nextNote  = parsed.note  ?? existing.note;
+      const nextTags  = parsed.tags  ?? existing.tags ?? [];
       await ctx.db.query(`
         UPDATE links
-        SET url = $1, title = $2, note = $3, updated_at = NOW()
-        WHERE id = $4 AND couple_id = $5
-      `, [nextUrl, nextTitle || nextUrl, nextNote, id, auth.couple.id]);
+        SET url = $1, title = $2, note = $3, tags = $4, updated_at = NOW()
+        WHERE id = $5 AND couple_id = $6
+      `, [nextUrl, nextTitle || nextUrl, nextNote, nextTags, id, auth.couple.id]);
 
       sendJson(res, 200, { link: await getLink(ctx.db, auth.couple.id, id) });
       return;
@@ -209,7 +251,13 @@ function validateAuthBody(body: unknown): AuthResult {
   return { ok: true, name, code };
 }
 
-type LinkBodyOk  = { ok: true;  url?: string | undefined; title?: string | undefined; note?: string | undefined };
+type LinkBodyOk = {
+  ok: true;
+  url?: string | undefined;
+  title?: string | undefined;
+  note?: string | undefined;
+  tags?: string[] | undefined;
+};
 type LinkBodyErr = { ok: false; error: string };
 type LinkBodyResult = LinkBodyOk | LinkBodyErr;
 
@@ -221,13 +269,38 @@ function validateLinkBody(
   const url   = raw?.["url"]   === undefined ? undefined : normalizeUrl(raw["url"]);
   const title = raw?.["title"] === undefined ? undefined : normalizeText(raw["title"], 140);
   const note  = raw?.["note"]  === undefined ? undefined : normalizeText(raw["note"], 600);
+  const tags  = raw?.["tags"]  === undefined ? undefined : normalizeTags(raw["tags"]);
 
   if (requireUrl && !url)  return { ok: false, error: "Enter a valid http or https URL." };
   if (url === null)        return { ok: false, error: "Enter a valid http or https URL." };
   if (title === null)      return { ok: false, error: "Title must be 140 characters or fewer." };
   if (note === null)       return { ok: false, error: "Note must be 600 characters or fewer." };
+  if (tags === null)       return { ok: false, error: "Use up to 10 tags, each 24 characters or fewer." };
 
-  return { ok: true, url: url ?? undefined, title: title ?? undefined, note: note ?? undefined };
+  return {
+    ok: true,
+    url: url ?? undefined,
+    title: title ?? undefined,
+    note: note ?? undefined,
+    tags: tags ?? undefined,
+  };
+}
+
+function normalizeTags(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length > 10) return null;
+  const tags: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string") return null;
+    const tag = entry.trim().replace(/\s+/g, " ");
+    if (!tag || tag.length > 24) return null;
+    const key = tag.toLocaleLowerCase();
+    if (!seen.has(key)) {
+      tags.push(tag);
+      seen.add(key);
+    }
+  }
+  return tags;
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────
@@ -269,7 +342,10 @@ async function getOrCreateCouple(db: DbClient, codeHash: string): Promise<Couple
 
 async function getLink(db: DbClient, coupleId: number, linkId: number): Promise<Link | undefined> {
   return db.get<Link>(`
-    SELECT id, url, title, note,
+    SELECT id, url, title, note, tags,
+           is_favorite AS "isFavorite",
+           preview_image AS "previewImage",
+           description, site_name AS "siteName",
            saver_name AS "saverName",
            created_at AS "createdAt",
            updated_at AS "updatedAt"
@@ -311,7 +387,8 @@ function normalizeUrl(value: unknown): string | null {
   }
 }
 
-async function fetchPageTitle(url: string): Promise<string> {
+async function fetchPageMetadata(url: string): Promise<PageMetadata> {
+  const empty: PageMetadata = { title: "", description: "", image: "", siteName: "" };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 3500);
   try {
@@ -320,15 +397,39 @@ async function fetchPageTitle(url: string): Promise<string> {
       headers: { "user-agent": "ShareLink/1.0 (+local app)" },
     });
     const contentType = response.headers.get("content-type") ?? "";
-    if (!response.ok || !contentType.includes("text/html")) return "";
+    if (!response.ok || !contentType.includes("text/html")) return empty;
     const html = await response.text();
-    const match = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-    return match ? decodeHtml(match[1]!).trim().replace(/\s+/g, " ").slice(0, 140) : "";
+    const metaValues = new Map<string, string>();
+    for (const tagMatch of html.matchAll(/<meta\b[^>]*>/gi)) {
+      const tag = tagMatch[0];
+      const key = readHtmlAttribute(tag, "property") || readHtmlAttribute(tag, "name");
+      const value = readHtmlAttribute(tag, "content");
+      if (key && value) metaValues.set(key.toLowerCase(), decodeHtml(value).trim());
+    }
+    const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const imageValue = metaValues.get("og:image") || metaValues.get("twitter:image") || "";
+    let image = "";
+    try { image = imageValue ? new URL(imageValue, url).toString() : ""; } catch {}
+    return {
+      title: (metaValues.get("og:title") || metaValues.get("twitter:title") ||
+        (titleMatch ? decodeHtml(titleMatch[1]!).trim() : ""))
+        .replace(/\s+/g, " ").slice(0, 140),
+      description: (metaValues.get("og:description") || metaValues.get("description") ||
+        metaValues.get("twitter:description") || "").replace(/\s+/g, " ").slice(0, 400),
+      image,
+      siteName: (metaValues.get("og:site_name") || "").replace(/\s+/g, " ").slice(0, 100),
+    };
   } catch {
-    return "";
+    return empty;
   } finally {
     clearTimeout(timer);
   }
+}
+
+function readHtmlAttribute(tag: string, name: string): string {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = tag.match(new RegExp(`\\b${escapedName}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"));
+  return match?.[1] ?? match?.[2] ?? match?.[3] ?? "";
 }
 
 function decodeHtml(value: string): string {
