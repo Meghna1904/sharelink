@@ -5,25 +5,35 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ShareLink — a quiet place for two</title>
     <meta name="description" content="A private space for two people to save and share links together." />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#faf7f2" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)"  content="#17140f" />
 
+    <!-- Fonts: Fraunces (display) + Inter (body) -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,600;1,9..144,300;1,9..144,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;1,9..144,300;1,9..144,400&family=Inter:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
 
-    <!-- ═══════════════════════════════════════════════════
+    <!-- ═══════════════════════════════════════════════════════════════
          LOGIN VIEW
-    ════════════════════════════════════════════════════ -->
-    <div class="view login-view" id="loginView">
+    ════════════════════════════════════════════════════════════════ -->
+    <div class="view login-view" id="loginView" role="main">
       <div class="login-shell">
+
+        <!-- Wordmark -->
         <header class="login-wordmark">
           <h1>Share<em>Link</em></h1>
           <p>A quiet place to collect things together.</p>
         </header>
 
-        <form id="loginForm" class="login-form" novalidate>
+        <!-- Login form -->
+        <form id="loginForm" class="login-form" novalidate aria-label="Sign in to your shared space">
+
           <div class="field">
             <label for="partnerName">Your name</label>
             <input
@@ -48,7 +58,9 @@
               required
               aria-required="true"
             />
-            <span class="field-hint">Both of you should use the same code to share the same space.</span>
+            <span class="field-hint" id="coupleCodeHint">
+              Both of you use the same code to open the same shared space.
+            </span>
           </div>
 
           <p class="form-error" id="loginError" role="alert" aria-live="assertive"></p>
@@ -57,33 +69,42 @@
             <span class="btn-label">Open our space</span>
             <span class="btn-loader" aria-hidden="true"></span>
           </button>
-        </form>
-      </div>
-    </div>
 
-    <!-- ═══════════════════════════════════════════════════
+        </form>
+
+      </div>
+    </div><!-- /login-view -->
+
+
+    <!-- ═══════════════════════════════════════════════════════════════
          APP VIEW
-    ════════════════════════════════════════════════════ -->
+    ════════════════════════════════════════════════════════════════ -->
     <div class="view app-view hidden" id="appView">
 
-      <!-- Header -->
+      <!-- ── App header ──────────────────────────────────────────── -->
       <header class="app-header">
         <div class="app-header-inner">
           <div class="app-wordmark">
-            <span class="app-logo">Share<em>Link</em></span>
+            <span class="app-logo" aria-hidden="true">Share<em>Link</em></span>
             <span class="space-name" id="spaceLabel" aria-label="Current user"></span>
           </div>
-          <button class="btn-switch" id="logoutButton" type="button" aria-label="Sign out and switch user">
+          <button
+            class="btn-switch"
+            id="logoutButton"
+            type="button"
+            aria-label="Switch user — sign out and enter different credentials"
+          >
             Switch
           </button>
         </div>
       </header>
 
-      <!-- Composer -->
-      <section class="composer-section" aria-label="Add a new link">
-        <form id="linkForm" novalidate>
+      <!-- ── Composer ────────────────────────────────────────────── -->
+      <section class="composer-section" aria-label="Add or edit a link">
+        <form id="linkForm" class="composer-form" novalidate>
           <input type="hidden" id="editingId" />
 
+          <!-- Primary row: URL + Save button -->
           <div class="composer-row">
             <input
               class="url-input"
@@ -92,10 +113,12 @@
               type="url"
               inputmode="url"
               autocomplete="off"
+              spellcheck="false"
               placeholder="Paste a link to save…"
               required
               aria-required="true"
-              aria-label="URL"
+              aria-label="URL to save"
+              aria-describedby="linkError"
             />
             <button class="btn-save" id="saveButton" type="submit">
               <span class="btn-label" id="saveBtnLabel">Save</span>
@@ -103,10 +126,11 @@
             </button>
           </div>
 
-          <!-- Expanded fields — shown after URL focused or in edit mode -->
-          <div class="composer-extra" id="composerExtra">
+          <!-- Expanded fields — revealed on focus or in edit mode -->
+          <div class="composer-extra hidden" id="composerExtra">
+
             <div class="field-row">
-              <div class="field field--small">
+              <div class="field">
                 <label for="titleInput">Title <span class="optional">optional</span></label>
                 <input
                   id="titleInput"
@@ -114,9 +138,11 @@
                   type="text"
                   placeholder="Auto-fetched if blank"
                   aria-label="Custom title (optional)"
+                  maxlength="140"
                 />
               </div>
             </div>
+
             <div class="field">
               <label for="noteInput">Note <span class="optional">optional</span></label>
               <textarea
@@ -125,39 +151,53 @@
                 rows="2"
                 placeholder="A thought about this link…"
                 aria-label="Note (optional)"
+                maxlength="600"
               ></textarea>
             </div>
 
             <div class="composer-footer">
               <p class="form-error" id="linkError" role="alert" aria-live="assertive"></p>
-              <button class="btn-cancel hidden" id="cancelEditButton" type="button">Discard edits</button>
+              <button class="btn-cancel hidden" id="cancelEditButton" type="button">
+                Discard edits
+              </button>
             </div>
+
           </div>
+
         </form>
       </section>
 
-      <!-- Status bar -->
-      <div class="list-status" id="listStatus" aria-live="polite"></div>
+      <!-- ── Status bar ──────────────────────────────────────────── -->
+      <div class="list-status" id="listStatus" aria-live="polite" aria-atomic="true"></div>
 
-      <!-- Empty state -->
-      <div class="empty-state hidden" id="emptyState">
+      <!-- ── Empty state ─────────────────────────────────────────── -->
+      <div class="empty-state hidden" id="emptyState" aria-label="No links saved yet">
         <div class="empty-inner">
           <span class="empty-glyph" aria-hidden="true">✦</span>
           <h2>Nothing here yet</h2>
-          <p>Paste the first link above — a recipe, an article, a place you want to remember. Your partner will see it here too.</p>
+          <p>
+            Paste the first link above — a recipe, an article, a place you'd like
+            to remember. Your partner will see it here too.
+          </p>
         </div>
       </div>
 
-      <!-- Feed -->
+      <!-- ── Feed skeleton (shown while loading) ────────────────── -->
+      <div class="feed" id="skeletonFeed" aria-hidden="true" style="padding-top:var(--sp-2)">
+        <!-- Injected by JS during initial load -->
+      </div>
+
+      <!-- ── Link feed ───────────────────────────────────────────── -->
       <main class="feed" id="linkFeed" aria-label="Saved links"></main>
 
-    </div>
+    </div><!-- /app-view -->
 
-    <!-- ═══════════════════════════════════════════════════
+
+    <!-- ═══════════════════════════════════════════════════════════════
          TEMPLATES
-    ════════════════════════════════════════════════════ -->
+    ════════════════════════════════════════════════════════════════ -->
 
-    <!-- Day group template -->
+    <!-- Day group -->
     <template id="tplDayGroup">
       <section class="day-group">
         <h2 class="day-label"></h2>
@@ -165,36 +205,74 @@
       </section>
     </template>
 
-    <!-- Link item template -->
+    <!-- Link item -->
     <template id="linkTemplate">
       <li class="link-item" role="listitem">
-        <div class="link-attribution">
-          <span class="saver-dot" aria-hidden="true"></span>
+        <!-- Partner initial badge -->
+        <div class="link-attribution" aria-hidden="true">
+          <span class="saver-badge"></span>
         </div>
+        <!-- Content -->
         <div class="link-body">
           <a class="link-title" target="_blank" rel="noreferrer noopener"></a>
           <span class="link-domain"></span>
           <p class="link-note"></p>
           <span class="link-meta"></span>
         </div>
+        <!-- Edit / delete (only for saver) -->
         <div class="link-controls">
-          <button class="ctrl-btn edit-link hidden" type="button" aria-label="Edit this link" title="Edit">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          <button
+            class="ctrl-btn edit-link hidden"
+            type="button"
+            aria-label="Edit this link"
+            title="Edit"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2.2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+            </svg>
           </button>
-          <button class="ctrl-btn delete-link hidden" type="button" aria-label="Delete this link" title="Delete">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+          <button
+            class="ctrl-btn delete-link hidden"
+            type="button"
+            aria-label="Delete this link"
+            title="Delete"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2.2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+              <path d="M10 11v6"/>
+              <path d="M14 11v6"/>
+            </svg>
           </button>
         </div>
       </li>
     </template>
 
+    <!-- Skeleton item template -->
+    <template id="tplSkeleton">
+      <div class="skeleton-item" aria-hidden="true">
+        <div class="skeleton-badge"></div>
+        <div class="skeleton-body">
+          <div class="skeleton-line skeleton-line--title"></div>
+          <div class="skeleton-line skeleton-line--domain"></div>
+          <div class="skeleton-line skeleton-line--note"></div>
+        </div>
+      </div>
+    </template>
+
     <!-- Delete confirm dialog -->
-    <dialog class="confirm-dialog" id="confirmDialog">
+    <dialog class="confirm-dialog" id="confirmDialog" aria-labelledby="confirmHeading" aria-describedby="confirmMsg">
       <form method="dialog">
+        <h3 id="confirmHeading">Remove this link?</h3>
         <p class="confirm-msg" id="confirmMsg"></p>
         <div class="confirm-actions">
-          <button class="btn-cancel-sm" value="cancel">Keep it</button>
-          <button class="btn-delete" value="confirm">Delete</button>
+          <button class="btn-cancel-sm" value="cancel" type="submit">Keep it</button>
+          <button class="btn-delete"    value="confirm" type="submit">Delete</button>
         </div>
       </form>
     </dialog>

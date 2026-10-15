@@ -64,6 +64,29 @@ describe("ShareLink API", () => {
     assert.equal(listed.body.links[0].note, "Maybe for the kitchen.");
   });
 
+  it("fetches a single link detail by ID", async () => {
+    const created = await request("/api/links", {
+      method: "POST",
+      name: "Whiskey",
+      code: "0101",
+      body: {
+        url: "https://example.com/detail-test",
+        title: "Detail Item",
+        note: "Note for detail test"
+      }
+    });
+    assert.equal(created.status, 201);
+    const id = created.body.link.id;
+
+    const fetched = await request(`/api/links/${id}`, {
+      name: "Matilda",
+      code: "0101"
+    });
+    assert.equal(fetched.status, 200);
+    assert.equal(fetched.body.link.title, "Detail Item");
+    assert.equal(fetched.body.link.note, "Note for detail test");
+  });
+
   it("edits and deletes only the link saved by the current partner", async () => {
     const created = await request("/api/links", {
       method: "POST",

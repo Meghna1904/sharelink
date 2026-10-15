@@ -97,6 +97,17 @@ async function routeApi(req, res, url, context) {
   }
 
   const match = url.pathname.match(/^\/api\/links\/(\d+)$/);
+  if (match && req.method === "GET") {
+    const id = Number(match[1]);
+    const existing = await getLink(context.db, auth.couple.id, id);
+    if (!existing) {
+      sendJson(res, 404, { error: "Link not found." });
+      return;
+    }
+    sendJson(res, 200, { link: existing });
+    return;
+  }
+
   if (match && req.method === "PATCH") {
     const id = Number(match[1]);
     const existing = await getLink(context.db, auth.couple.id, id);

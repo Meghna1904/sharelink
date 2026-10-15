@@ -1,0 +1,112 @@
+:root {
+  /* ── Color Palette: Warm parchment, charcoal ink, terracotta accent ── */
+  --color-canvas: hsl(36, 14%, 97%);
+  --color-surface: hsl(36, 14%, 100%);
+  --color-surface-translucent: hsla(36, 14%, 97%, 0.88);
+  --color-ink: hsl(30, 10%, 14%);
+  --color-ink-secondary: hsl(30, 8%, 38%);
+  --color-ink-muted: hsl(30, 7%, 52%);
+  --color-ink-faint: hsl(30, 6%, 72%);
+  --color-rule: hsl(36, 12%, 88%);
+  --color-rule-subtle: hsl(36, 10%, 92%);
+
+  --color-accent: hsl(17, 55%, 49%);
+  --color-accent-hover: hsl(17, 60%, 43%);
+  --color-accent-subtle: hsl(17, 55%, 95%);
+  --color-accent-ring: hsla(17, 55%, 49%, 0.25);
+
+  --color-error: hsl(5, 68%, 46%);
+  --color-error-bg: hsl(5, 70%, 96%);
+
+  /* ── Partner Tints: Restrained editorial palettes ── */
+  --tint-sage-bg: hsl(140, 22%, 92%);
+  --tint-sage-text: hsl(140, 32%, 24%);
+
+  --tint-rose-bg: hsl(352, 28%, 93%);
+  --tint-rose-text: hsl(352, 38%, 30%);
+
+  --tint-slate-bg: hsl(210, 18%, 91%);
+  --tint-slate-text: hsl(210, 26%, 28%);
+
+  --tint-ochre-bg: hsl(38, 42%, 91%);
+  --tint-ochre-text: hsl(38, 55%, 26%);
+
+  /* ── Typography Scale ── */
+  --font-serif: "Fraunces", Georgia, "Times New Roman", serif;
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+
+  --text-xs: 0.75rem;       /* 12px */
+  --text-sm: 0.875rem;      /* 14px */
+  --text-base: 1rem;        /* 16px */
+  --text-md: 1.125rem;      /* 18px */
+  --text-lg: 1.25rem;       /* 20px */
+  --text-xl: 1.5rem;        /* 24px */
+  --text-2xl: 1.875rem;     /* 30px */
+  --text-3xl: 2.25rem;      /* 36px */
+
+  --leading-none: 1;
+  --leading-tight: 1.25;
+  --leading-snug: 1.375;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.65;
+
+  /* ── Spacing Tokens ── */
+  --space-0-5: 0.125rem;    /* 2px */
+  --space-1: 0.25rem;       /* 4px */
+  --space-2: 0.5rem;        /* 8px */
+  --space-3: 0.75rem;       /* 12px */
+  --space-4: 1rem;          /* 16px */
+  --space-5: 1.25rem;       /* 20px */
+  --space-6: 1.5rem;        /* 24px */
+  --space-8: 2rem;          /* 32px */
+  --space-10: 2.5rem;       /* 40px */
+  --space-12: 3rem;         /* 48px */
+  --space-16: 4rem;         /* 64px */
+  --space-20: 5rem;         /* 80px */
+
+  /* ── Layout Widths ── */
+  --max-width-login: 400px;
+  --max-width-feed: 680px;
+  --max-width-detail: 620px;
+
+  /* ── Transitions & Radii ── */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-full: 9999px;
+  --transition-fast: 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-normal: 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-canvas: hsl(30, 8%, 11%);
+    --color-surface: hsl(30, 8%, 15%);
+    --color-surface-translucent: hsla(30, 8%, 11%, 0.88);
+    --color-ink: hsl(36, 14%, 93%);
+    --color-ink-secondary: hsl(36, 10%, 72%);
+    --color-ink-muted: hsl(36, 8%, 56%);
+    --color-ink-faint: hsl(36, 6%, 36%);
+    --color-rule: hsl(30, 6%, 22%);
+    --color-rule-subtle: hsl(30, 6%, 18%);
+
+    --color-accent: hsl(17, 72%, 62%);
+    --color-accent-hover: hsl(17, 75%, 68%);
+    --color-accent-subtle: hsl(17, 30%, 18%);
+    --color-accent-ring: hsla(17, 72%, 62%, 0.3);
+
+    --color-error: hsl(5, 75%, 62%);
+    --color-error-bg: hsl(5, 40%, 16%);
+
+    --tint-sage-bg: hsl(140, 18%, 20%);
+    --tint-sage-text: hsl(140, 32%, 78%);
+
+    --tint-rose-bg: hsl(352, 22%, 22%);
+    --tint-rose-text: hsl(352, 40%, 82%);
+
+    --tint-slate-bg: hsl(210, 15%, 21%);
+    --tint-slate-text: hsl(210, 28%, 80%);
+
+    --tint-ochre-bg: hsl(38, 25%, 20%);
+    --tint-ochre-text: hsl(38, 50%, 80%);
+  }
+}
