@@ -452,6 +452,16 @@ function decodeHtml(value: string): string {
 }
 
 async function readJsonBody(req: IncomingMessage): Promise<unknown> {
+  // Vercel may expose an already parsed body on its IncomingMessage adapter.
+  // Prefer it when present; otherwise read the raw stream for the local server.
+  const parsedBody = (req as IncomingMessage & { body?: unknown }).body;
+  if (parsedBody !== undefined) {
+    if (typeof parsedBody === "string") {
+      try { return JSON.parse(parsedBody) as unknown; } catch { return {}; }
+    }
+    return parsedBody;
+  }
+
   let body = "";
   for await (const chunk of req) {
     body += chunk as string;
