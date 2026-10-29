@@ -1996,9 +1996,12 @@ input::placeholder, textarea::placeholder { color: #b0a498; opacity: 1; }
 .app-logo-mark svg { width: 17px; height: 17px; }
 .app-brand-name {
   color: #f3ede6;
-  font: 600 18px/1 "Geist", system-ui, sans-serif;
-  letter-spacing: -.02em;
+  display: inline-flex;
+  align-items: baseline;
+  font: 700 19px/1 "Space Grotesk", "Geist", system-ui, sans-serif;
+  letter-spacing: -.055em;
 }
+.app-brand-link { font-weight: 500; }
 .header-search { width: 360px; justify-self: center; }
 .header-search-field {
   height: 38px;
