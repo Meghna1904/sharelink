@@ -587,6 +587,7 @@ async function onFeedClick(e) {
     closeLinkMenus();
     menu.classList.toggle("hidden", !opening);
     menuToggle.setAttribute("aria-expanded", String(opening));
+    item.classList.toggle("menu-open", opening);
     return;
   }
 
@@ -958,6 +959,7 @@ function closePeek() {
 function closeLinkMenus() {
   document.querySelectorAll(".link-menu").forEach((menu) => menu.classList.add("hidden"));
   document.querySelectorAll(".menu-toggle").forEach((button) => button.setAttribute("aria-expanded", "false"));
+  document.querySelectorAll(".link-item.menu-open").forEach((item) => item.classList.remove("menu-open"));
 }
 
 function setFavorite(link, isFavorite, { showToast: shouldShowToast = false, previousFavorite = link.isFavorite } = {}) {

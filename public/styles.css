@@ -2218,6 +2218,7 @@ input::placeholder, textarea::placeholder { color: #b0a498; opacity: 1; }
 .link-tags .tag-chip { cursor: pointer; }
 .link-controls { opacity: 0; align-items: center; gap: 3px; padding: 0; }
 .link-item:hover .link-controls, .link-item:focus-within .link-controls { opacity: 1; }
+.link-item.menu-open { position: relative; z-index: 90; }
 .ctrl-btn { width: 30px; height: 30px; border-radius: 8px; color: #b0a498; }
 .ctrl-btn:hover { color: #f3ede6; background: #342b25; }
 .ctrl-btn.favorite-link { color: #b0a498; font-size: 20px; }
