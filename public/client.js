@@ -702,7 +702,7 @@ function openPreview(link, opener, { focus = true } = {}) {
   el.previewBackdrop.classList.remove("hidden");
   document.body.classList.add("preview-open");
   renderPreviewPanel(link);
-  if (!link.metadataFetchedAt) ensurePreviewMetadata(link);
+  if (!link.metadataFetchedAt || !link.previewImage) ensurePreviewMetadata(link);
   if (focus && !isAlreadyOpen) requestAnimationFrame(() => el.previewPanel.focus());
 }
 
@@ -756,7 +756,7 @@ function renderPreviewPanel(link) {
 }
 
 function ensurePreviewMetadata(link) {
-  if (link.metadataFetchedAt || metadataLoads.has(link.id)) return metadataLoads.get(link.id);
+  if ((link.metadataFetchedAt && link.previewImage) || metadataLoads.has(link.id)) return metadataLoads.get(link.id);
   const request = api(`/api/links/${link.id}/metadata`, { method: "POST" })
     .then(({ link: updated }) => {
       Object.assign(link, {

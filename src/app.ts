@@ -227,7 +227,10 @@ async function routeApi(
     const id = Number(metadataMatch[1]);
     const existing = await getLink(ctx.db, auth.couple.id, id, auth.name);
     if (!existing) { sendJson(res, 404, { error: "Link not found." }); return; }
-    if (existing.metadataFetchedAt) {
+    // A prior request may have been blocked or timed out. Keep successful
+    // image metadata cached, but allow image-less links to be retried when a
+    // preview is opened so transient production fetch failures can recover.
+    if (existing.metadataFetchedAt && existing.previewImage) {
       sendJson(res, 200, { link: existing });
       return;
     }
@@ -534,11 +537,19 @@ function emptyPageMetadata(): PageMetadata {
 async function fetchPageMetadata(url: string): Promise<PageMetadata> {
   const empty = emptyPageMetadata();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 3500);
+  // Production hosts often have slower outbound connections than local dev.
+  // Keep comfortably within the Vercel function's configured 15 second limit.
+  const timer = setTimeout(() => controller.abort(), 8000);
   try {
     const response = await fetch(url, {
       signal: controller.signal,
-      headers: { "user-agent": "ShareLink/1.0 (+local app)" },
+      headers: {
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "accept-language": "en-US,en;q=0.9",
+        // A number of sites serve a challenge page or omit OG tags for unknown
+        // server-side user agents. Use a conventional browser UA for metadata.
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      },
     });
     const contentType = response.headers.get("content-type") ?? "";
     if (!response.ok || !contentType.includes("text/html")) return empty;
@@ -552,7 +563,8 @@ async function fetchPageMetadata(url: string): Promise<PageMetadata> {
     }
     const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
     const pageUrl = response.url || url;
-    const imageValue = metaValues.get("og:image") || metaValues.get("twitter:image") || "";
+    const imageValue = metaValues.get("og:image") || metaValues.get("og:image:secure_url") ||
+      metaValues.get("twitter:image") || metaValues.get("twitter:image:src") || "";
     const title = metaValues.get("og:title") || metaValues.get("twitter:title") ||
       (titleMatch ? decodeHtml(titleMatch[1]!).trim() : "");
     const description = metaValues.get("og:description") || metaValues.get("twitter:description") ||
