@@ -23,6 +23,7 @@ export interface PageMetadata {
   description: string;
   image: string;
   siteName: string;
+  favicon: string;
 }
 
 export type MetadataFetcher = (url: string) => Promise<PageMetadata>;
@@ -111,17 +112,20 @@ async function routeApi(
   // GET /api/links
   if (req.method === "GET" && url.pathname === "/api/links") {
     const rows = await ctx.db.all<Link>(`
-      SELECT id, url, title, note, tags,
-             is_favorite AS "isFavorite",
-             preview_image AS "previewImage",
-             description, site_name AS "siteName",
-             saver_name  AS "saverName",
-             created_at  AS "createdAt",
-             updated_at  AS "updatedAt"
+      SELECT links.id, url, title, og_title AS "ogTitle", note, tags,
+             EXISTS (
+               SELECT 1 FROM link_favorites
+               WHERE link_id = links.id AND user_name = $2
+             ) AS "isFavorite",
+             preview_image AS "previewImage", favicon_url AS "faviconUrl",
+             description, site_name AS "siteName", metadata_fetched_at AS "metadataFetchedAt",
+             saver_name AS "saverName",
+             created_at AS "createdAt",
+             updated_at AS "updatedAt"
       FROM links
       WHERE couple_id = $1
       ORDER BY created_at DESC, id DESC
-    `, [auth.couple.id]);
+    `, [auth.couple.id, auth.name]);
     sendJson(res, 200, { links: rows });
     return;
   }
@@ -144,27 +148,32 @@ async function routeApi(
       return;
     }
 
-    const metadata = await ctx.metadataFetcher(parsed.url!);
+    let metadata = emptyPageMetadata();
+    try { metadata = await ctx.metadataFetcher(parsed.url!); } catch { /* Saving the URL still succeeds without metadata. */ }
     const title = parsed.title || metadata.title || parsed.url!;
     const row = await ctx.db.get<{ id: number }>(`
       INSERT INTO links (
-        couple_id, url, title, note, saver_name, tags, preview_image, description, site_name
+        couple_id, url, title, og_title, note, saver_name, tags, preview_image, description,
+        site_name, favicon_url, metadata_fetched_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       RETURNING id
     `, [
       auth.couple.id,
       parsed.url,
       title,
+      normalizeText(metadata.title, 140) ?? "",
       parsed.note ?? "",
       auth.name,
       parsed.tags ?? [],
       normalizeUrl(metadata.image) ?? null,
       normalizeText(metadata.description, 400) ?? "",
       normalizeText(metadata.siteName, 100) ?? "",
+      normalizeUrl(metadata.favicon) ?? null,
+      new Date(),
     ]);
 
-    const link = await getLink(ctx.db, auth.couple.id, row!.id);
+    const link = await getLink(ctx.db, auth.couple.id, row!.id, auth.name);
     sendJson(res, 201, { link });
     return;
   }
@@ -173,18 +182,45 @@ async function routeApi(
   const favoriteMatch = url.pathname.match(/^\/api\/links\/(\d+)\/favorite$/);
   if (favoriteMatch && req.method === "POST") {
     const id = Number(favoriteMatch[1]);
-    const existing = await getLink(ctx.db, auth.couple.id, id);
+    const existing = await getLink(ctx.db, auth.couple.id, id, auth.name);
     if (!existing) { sendJson(res, 404, { error: "Link not found." }); return; }
     const body = await readJsonBody(req) as Record<string, unknown> | null;
     if (typeof body?.["isFavorite"] !== "boolean") {
       sendJson(res, 400, { error: "Choose whether this link is a favorite." });
       return;
     }
-    await ctx.db.query(
-      "UPDATE links SET is_favorite = $1, updated_at = NOW() WHERE id = $2 AND couple_id = $3",
-      [body["isFavorite"], id, auth.couple.id]
-    );
-    sendJson(res, 200, { link: await getLink(ctx.db, auth.couple.id, id) });
+    await setFavorite(ctx.db, id, auth.name, body["isFavorite"]);
+    sendJson(res, 200, { link: await getLink(ctx.db, auth.couple.id, id, auth.name) });
+    return;
+  }
+
+  const metadataMatch = url.pathname.match(/^\/api\/links\/(\d+)\/metadata$/);
+  if (metadataMatch && req.method === "POST") {
+    const id = Number(metadataMatch[1]);
+    const existing = await getLink(ctx.db, auth.couple.id, id, auth.name);
+    if (!existing) { sendJson(res, 404, { error: "Link not found." }); return; }
+    if (existing.metadataFetchedAt) {
+      sendJson(res, 200, { link: existing });
+      return;
+    }
+
+    let metadata = emptyPageMetadata();
+    try { metadata = await ctx.metadataFetcher(existing.url); } catch { /* Keep the saved link usable without metadata. */ }
+    await ctx.db.query(`
+      UPDATE links
+      SET og_title = $1, preview_image = $2, description = $3,
+          site_name = $4, favicon_url = $5, metadata_fetched_at = NOW()
+      WHERE id = $6 AND couple_id = $7
+    `, [
+      normalizeText(metadata.title, 140) ?? "",
+      normalizeUrl(metadata.image) ?? null,
+      normalizeText(metadata.description, 400) ?? "",
+      normalizeText(metadata.siteName, 100) ?? "",
+      normalizeUrl(metadata.favicon) ?? null,
+      id,
+      auth.couple.id,
+    ]);
+    sendJson(res, 200, { link: await getLink(ctx.db, auth.couple.id, id, auth.name) });
     return;
   }
 
@@ -193,14 +229,14 @@ async function routeApi(
     const id = Number(match[1]);
 
     if (req.method === "GET") {
-      const existing = await getLink(ctx.db, auth.couple.id, id);
+      const existing = await getLink(ctx.db, auth.couple.id, id, auth.name);
       if (!existing) { sendJson(res, 404, { error: "Link not found." }); return; }
       sendJson(res, 200, { link: existing });
       return;
     }
 
     if (req.method === "PATCH") {
-      const existing = await getLink(ctx.db, auth.couple.id, id);
+      const existing = await getLink(ctx.db, auth.couple.id, id, auth.name);
       if (!existing) { sendJson(res, 404, { error: "Link not found." }); return; }
 
       // The Vercel adapter may not expose a streamed JSON body to this Node
@@ -215,21 +251,15 @@ async function routeApi(
             (typeof vercelQuery?.["favorite"] === "string" ? vercelQuery["favorite"] : null);
       if (favoriteParam === "true" || favoriteParam === "false") {
         const isFavorite = favoriteParam === "true";
-        await ctx.db.query(
-          "UPDATE links SET is_favorite = $1, updated_at = NOW() WHERE id = $2 AND couple_id = $3",
-          [isFavorite, id, auth.couple.id]
-        );
-        sendJson(res, 200, { link: await getLink(ctx.db, auth.couple.id, id) });
+        await setFavorite(ctx.db, id, auth.name, isFavorite);
+        sendJson(res, 200, { link: await getLink(ctx.db, auth.couple.id, id, auth.name) });
         return;
       }
 
       const body = await readJsonBody(req) as Record<string, unknown> | null;
       if (typeof body?.["isFavorite"] === "boolean") {
-        await ctx.db.query(
-          "UPDATE links SET is_favorite = $1, updated_at = NOW() WHERE id = $2 AND couple_id = $3",
-          [body["isFavorite"], id, auth.couple.id]
-        );
-        sendJson(res, 200, { link: await getLink(ctx.db, auth.couple.id, id) });
+        await setFavorite(ctx.db, id, auth.name, body["isFavorite"]);
+        sendJson(res, 200, { link: await getLink(ctx.db, auth.couple.id, id, auth.name) });
         return;
       }
 
@@ -247,16 +277,23 @@ async function routeApi(
       const nextTags  = parsed.tags  ?? existing.tags ?? [];
       await ctx.db.query(`
         UPDATE links
-        SET url = $1, title = $2, note = $3, tags = $4, updated_at = NOW()
+        SET url = $1, title = $2, note = $3, tags = $4,
+            og_title = CASE WHEN url <> $1 THEN '' ELSE og_title END,
+            preview_image = CASE WHEN url <> $1 THEN NULL ELSE preview_image END,
+            description = CASE WHEN url <> $1 THEN '' ELSE description END,
+            site_name = CASE WHEN url <> $1 THEN '' ELSE site_name END,
+            favicon_url = CASE WHEN url <> $1 THEN NULL ELSE favicon_url END,
+            metadata_fetched_at = CASE WHEN url <> $1 THEN NULL ELSE metadata_fetched_at END,
+            updated_at = NOW()
         WHERE id = $5 AND couple_id = $6
       `, [nextUrl, nextTitle || nextUrl, nextNote, nextTags, id, auth.couple.id]);
 
-      sendJson(res, 200, { link: await getLink(ctx.db, auth.couple.id, id) });
+      sendJson(res, 200, { link: await getLink(ctx.db, auth.couple.id, id, auth.name) });
       return;
     }
 
     if (req.method === "DELETE") {
-      const existing = await getLink(ctx.db, auth.couple.id, id);
+      const existing = await getLink(ctx.db, auth.couple.id, id, auth.name);
       if (!existing) { sendJson(res, 404, { error: "Link not found." }); return; }
       if (existing.saverName !== auth.name) {
         sendJson(res, 403, { error: "Only the partner who saved this link can delete it." });
@@ -380,18 +417,35 @@ async function getOrCreateCouple(db: DbClient, codeHash: string): Promise<Couple
   return db.get<Couple>("SELECT id FROM couples WHERE code_hash = $1", [codeHash]);
 }
 
-async function getLink(db: DbClient, coupleId: number, linkId: number): Promise<Link | undefined> {
+async function getLink(db: DbClient, coupleId: number, linkId: number, userName: string): Promise<Link | undefined> {
   return db.get<Link>(`
-    SELECT id, url, title, note, tags,
-           is_favorite AS "isFavorite",
-           preview_image AS "previewImage",
-           description, site_name AS "siteName",
+    SELECT id, url, title, og_title AS "ogTitle", note, tags,
+           EXISTS (
+             SELECT 1 FROM link_favorites
+             WHERE link_id = links.id AND user_name = $3
+           ) AS "isFavorite",
+           preview_image AS "previewImage", favicon_url AS "faviconUrl",
+           description, site_name AS "siteName", metadata_fetched_at AS "metadataFetchedAt",
            saver_name AS "saverName",
            created_at AS "createdAt",
            updated_at AS "updatedAt"
     FROM links
     WHERE id = $1 AND couple_id = $2
-  `, [linkId, coupleId]);
+  `, [linkId, coupleId, userName]);
+}
+
+async function setFavorite(db: DbClient, linkId: number, userName: string, isFavorite: boolean): Promise<void> {
+  if (isFavorite) {
+    await db.query(
+      "INSERT INTO link_favorites (link_id, user_name) VALUES ($1, $2) ON CONFLICT (link_id, user_name) DO NOTHING",
+      [linkId, userName]
+    );
+  } else {
+    await db.query(
+      "DELETE FROM link_favorites WHERE link_id = $1 AND user_name = $2",
+      [linkId, userName]
+    );
+  }
 }
 
 function canonicalizeUrl(value: string): string {
@@ -445,8 +499,12 @@ function normalizeUrl(value: unknown): string | null {
   }
 }
 
+function emptyPageMetadata(): PageMetadata {
+  return { title: "", description: "", image: "", siteName: "", favicon: "" };
+}
+
 async function fetchPageMetadata(url: string): Promise<PageMetadata> {
-  const empty: PageMetadata = { title: "", description: "", image: "", siteName: "" };
+  const empty = emptyPageMetadata();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 3500);
   try {
@@ -465,22 +523,40 @@ async function fetchPageMetadata(url: string): Promise<PageMetadata> {
       if (key && value) metaValues.set(key.toLowerCase(), decodeHtml(value).trim());
     }
     const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    const pageUrl = response.url || url;
     const imageValue = metaValues.get("og:image") || metaValues.get("twitter:image") || "";
-    let image = "";
-    try { image = imageValue ? new URL(imageValue, url).toString() : ""; } catch {}
+    const title = metaValues.get("og:title") || metaValues.get("twitter:title") ||
+      (titleMatch ? decodeHtml(titleMatch[1]!).trim() : "");
+    const description = metaValues.get("og:description") || metaValues.get("twitter:description") ||
+      metaValues.get("description") || "";
+    const iconTag = [...html.matchAll(/<link\b[^>]*>/gi)].find((match) => {
+      const rel = readHtmlAttribute(match[0], "rel").toLowerCase().split(/\s+/);
+      return rel.some((value) => value === "icon" || value === "shortcut");
+    })?.[0];
+    const faviconValue = iconTag ? readHtmlAttribute(iconTag, "href") : "";
+    const siteName = metaValues.get("og:site_name") || (() => {
+      try { return new URL(pageUrl).hostname.replace(/^www\./, ""); } catch { return ""; }
+    })();
     return {
-      title: (metaValues.get("og:title") || metaValues.get("twitter:title") ||
-        (titleMatch ? decodeHtml(titleMatch[1]!).trim() : ""))
-        .replace(/\s+/g, " ").slice(0, 140),
-      description: (metaValues.get("og:description") || metaValues.get("description") ||
-        metaValues.get("twitter:description") || "").replace(/\s+/g, " ").slice(0, 400),
-      image,
-      siteName: (metaValues.get("og:site_name") || "").replace(/\s+/g, " ").slice(0, 100),
+      title: decodeHtml(title).replace(/\s+/g, " ").slice(0, 140),
+      description: decodeHtml(description).replace(/\s+/g, " ").slice(0, 400),
+      image: resolveMetadataUrl(pageUrl, imageValue),
+      siteName: decodeHtml(siteName).replace(/\s+/g, " ").slice(0, 100),
+      favicon: resolveMetadataUrl(pageUrl, faviconValue || "/favicon.ico"),
     };
   } catch {
     return empty;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+function resolveMetadataUrl(base: string, value: string): string {
+  try {
+    const resolved = new URL(value, base);
+    return ["http:", "https:"].includes(resolved.protocol) ? resolved.toString() : "";
+  } catch {
+    return "";
   }
 }
 

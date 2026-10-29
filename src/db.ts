@@ -12,9 +12,12 @@ export interface Link {
   updatedAt: string;
   tags: string[];
   isFavorite: boolean;
+  ogTitle: string;
   previewImage: string | null;
   description: string;
   siteName: string;
+  faviconUrl: string | null;
+  metadataFetchedAt: string | null;
 }
 
 export interface Couple {
@@ -63,18 +66,31 @@ export function openDatabase(connectionString?: string): DbClient {
         saver_name TEXT    NOT NULL,
         tags       TEXT[]  NOT NULL DEFAULT '{}',
         is_favorite BOOLEAN NOT NULL DEFAULT FALSE,
+        og_title TEXT NOT NULL DEFAULT '',
         preview_image TEXT,
         description TEXT NOT NULL DEFAULT '',
         site_name TEXT NOT NULL DEFAULT '',
+        favicon_url TEXT,
+        metadata_fetched_at TIMESTAMP,
         created_at TIMESTAMP NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMP NOT NULL DEFAULT NOW()
       );
 
       ALTER TABLE links ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
       ALTER TABLE links ADD COLUMN IF NOT EXISTS is_favorite BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE links ADD COLUMN IF NOT EXISTS og_title TEXT NOT NULL DEFAULT '';
       ALTER TABLE links ADD COLUMN IF NOT EXISTS preview_image TEXT;
       ALTER TABLE links ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
       ALTER TABLE links ADD COLUMN IF NOT EXISTS site_name TEXT NOT NULL DEFAULT '';
+      ALTER TABLE links ADD COLUMN IF NOT EXISTS favicon_url TEXT;
+      ALTER TABLE links ADD COLUMN IF NOT EXISTS metadata_fetched_at TIMESTAMP;
+
+      CREATE TABLE IF NOT EXISTS link_favorites (
+        link_id INTEGER NOT NULL REFERENCES links(id) ON DELETE CASCADE,
+        user_name TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (link_id, user_name)
+      );
 
       CREATE INDEX IF NOT EXISTS idx_links_couple_created
         ON links (couple_id, created_at DESC, id DESC);
@@ -115,13 +131,16 @@ function createMemoryDb(): DbClient {
     couple_id: number;
     url: string;
     title: string;
+    og_title: string;
     note: string;
     saver_name: string;
     tags: string[];
-    is_favorite: boolean;
+    favorite_user_names: Set<string>;
     preview_image: string | null;
     description: string;
     site_name: string;
+    favicon_url: string | null;
+    metadata_fetched_at: string | null;
     created_at: string;
     updated_at: string;
   }
@@ -138,20 +157,42 @@ function createMemoryDb(): DbClient {
         if (!couples.some((c) => c.code_hash === codeHash)) {
           couples.push({ id: coupleIdSeq++, code_hash: codeHash, created_at: new Date().toISOString() });
         }
-      } else if (text.includes("UPDATE links")) {
-        if (text.includes("SET is_favorite")) {
-          const [isFavorite, id, coupleId] = params;
-          const link = links.find((l) => l.id === Number(id) && l.couple_id === Number(coupleId));
-          if (link) link.is_favorite = Boolean(isFavorite);
-          return;
+      } else if (text.includes("INSERT INTO link_favorites")) {
+        const [id, userName] = params;
+        const link = links.find((l) => l.id === Number(id));
+        link?.favorite_user_names.add(String(userName));
+      } else if (text.includes("DELETE FROM link_favorites")) {
+        const [id, userName] = params;
+        const link = links.find((l) => l.id === Number(id));
+        link?.favorite_user_names.delete(String(userName));
+      } else if (text.includes("UPDATE links") && text.includes("SET og_title")) {
+        const [ogTitle, previewImage, description, siteName, faviconUrl, id, coupleId] = params;
+        const link = links.find((l) => l.id === Number(id) && l.couple_id === Number(coupleId));
+        if (link) {
+          link.og_title = String(ogTitle ?? "");
+          link.preview_image = previewImage ? String(previewImage) : null;
+          link.description = String(description ?? "");
+          link.site_name = String(siteName ?? "");
+          link.favicon_url = faviconUrl ? String(faviconUrl) : null;
+          link.metadata_fetched_at = new Date().toISOString();
         }
+      } else if (text.includes("UPDATE links")) {
         const [nextUrl, nextTitle, nextNote, tags, id, coupleId] = params;
         const link = links.find((l) => l.id === Number(id) && l.couple_id === Number(coupleId));
         if (link) {
+          const urlChanged = link.url !== String(nextUrl);
           link.url = String(nextUrl);
           link.title = String(nextTitle);
           link.note = String(nextNote);
           link.tags = Array.isArray(tags) ? tags.map(String) : [];
+          if (urlChanged) {
+            link.og_title = "";
+            link.preview_image = null;
+            link.description = "";
+            link.site_name = "";
+            link.favicon_url = null;
+            link.metadata_fetched_at = null;
+          }
           link.updated_at = new Date().toISOString();
         }
       } else if (text.includes("DELETE FROM links")) {
@@ -172,15 +213,18 @@ function createMemoryDb(): DbClient {
             id: l.id,
             url: l.url,
             title: l.title,
+            ogTitle: l.og_title,
             note: l.note,
             saverName: l.saver_name,
             createdAt: l.created_at,
             updatedAt: l.updated_at,
             tags: l.tags,
-            isFavorite: l.is_favorite,
+            isFavorite: l.favorite_user_names.has(String(params[1] ?? "")),
             previewImage: l.preview_image,
             description: l.description,
             siteName: l.site_name,
+            faviconUrl: l.favicon_url,
+            metadataFetchedAt: l.metadata_fetched_at,
           }));
         return matching as unknown as T[];
       }
@@ -193,19 +237,22 @@ function createMemoryDb(): DbClient {
         return c ? ({ id: c.id } as unknown as T) : undefined;
       }
       if (text.includes("INSERT INTO links") && text.includes("RETURNING id")) {
-        const [coupleId, url, title, note, saverName, tags, previewImage, description, siteName] = params;
+        const [coupleId, url, title, ogTitle, note, saverName, tags, previewImage, description, siteName, faviconUrl, metadataFetchedAt] = params;
         const newLink: LinkRow = {
           id: linkIdSeq++,
           couple_id: Number(coupleId),
           url: String(url),
           title: String(title),
+          og_title: String(ogTitle ?? ""),
           note: String(note ?? ""),
           saver_name: String(saverName),
           tags: Array.isArray(tags) ? tags.map(String) : [],
-          is_favorite: false,
+          favorite_user_names: new Set<string>(),
           preview_image: previewImage ? String(previewImage) : null,
           description: String(description ?? ""),
           site_name: String(siteName ?? ""),
+          favicon_url: faviconUrl ? String(faviconUrl) : null,
+          metadata_fetched_at: metadataFetchedAt ? new Date(String(metadataFetchedAt)).toISOString() : null,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
@@ -220,15 +267,18 @@ function createMemoryDb(): DbClient {
           id: l.id,
           url: l.url,
           title: l.title,
+          ogTitle: l.og_title,
           note: l.note,
           saverName: l.saver_name,
           createdAt: l.created_at,
           updatedAt: l.updated_at,
           tags: l.tags,
-          isFavorite: l.is_favorite,
+          isFavorite: l.favorite_user_names.has(String(params[2] ?? "")),
           previewImage: l.preview_image,
           description: l.description,
           siteName: l.site_name,
+          faviconUrl: l.favicon_url,
+          metadataFetchedAt: l.metadata_fetched_at,
         } as unknown as T;
       }
       return undefined;

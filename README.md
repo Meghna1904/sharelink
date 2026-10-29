@@ -86,8 +86,10 @@ Attribution is shown as a **monogram initial badge** (e.g. "A" for Alice) in tha
 ```bash
 npm install
 npm run build           # compile TypeScript → dist/
-DATABASE_URL=postgres://... npm start
+npm run dev
 ```
+
+For local development, put your Vercel `DATABASE_URL` in the project-root `.env.local` file. The dev script loads that file automatically; `.env.local` is git-ignored and should not be committed.
 
 Open [http://localhost:3000](http://localhost:3000).
 

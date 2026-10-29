@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;1,9..144,300;1,9..144,400&family=Inter:wght@400;500;600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;1,9..144,300;1,9..144,400&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Inter:wght@400;500;600&family=Space+Grotesk:wght@600&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/styles.css" />
@@ -84,18 +84,41 @@
       <!-- ── App header ──────────────────────────────────────────── -->
       <header class="app-header">
         <div class="app-header-inner">
-          <div class="app-wordmark">
-            <span class="app-logo" aria-hidden="true">Share<em>Link</em></span>
-            <span class="space-name" id="spaceLabel" aria-label="Current user"></span>
+          <a class="app-wordmark" href="/" aria-label="ShareLink home">
+            <span class="app-logo-mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="M10 13.5 8.7 14.8a3.4 3.4 0 0 1-4.8-4.8l3-3a3.4 3.4 0 0 1 4.8 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="m14 10.5 1.3-1.3a3.4 3.4 0 0 1 4.8 4.8l-3 3a3.4 3.4 0 0 1-4.8 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                <path d="m9 15 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </span>
+            <span class="app-brand-name">sharelink</span>
+          </a>
+
+          <div class="header-search" id="headerSearch">
+            <button class="mobile-search-toggle" id="mobileSearchToggle" type="button" aria-label="Open search" aria-expanded="false">
+              <svg class="mobile-search-open-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8" stroke="currentColor" stroke-width="1.8"/><path d="m16 16 4.2 4.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+              <svg class="mobile-search-close-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            </button>
+            <label class="header-search-field">
+              <span class="sr-only">Search links</span>
+              <svg class="search-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8" stroke="currentColor" stroke-width="1.8"/><path d="m16 16 4.2 4.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+              <input id="searchInput" class="search-input" type="search" placeholder="Search links, notes, tags" autocomplete="off" />
+              <kbd class="search-shortcut">/</kbd>
+            </label>
           </div>
-          <button
-            class="btn-switch"
-            id="logoutButton"
-            type="button"
-            aria-label="Switch user — sign out and enter different credentials"
-          >
-            Switch
-          </button>
+
+          <div class="user-menu-wrap" id="userMenuWrap">
+            <button class="user-chip" id="userMenuButton" type="button" aria-haspopup="menu" aria-expanded="false">
+              <span class="user-avatar" id="userAvatar" aria-hidden="true"></span>
+              <span class="user-chip-name" id="spaceLabel" aria-label="Current user"></span>
+              <svg class="user-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <div class="user-dropdown hidden" id="userDropdown" role="menu" aria-label="User menu">
+              <button type="button" class="user-menu-item" id="switchUserButton" role="menuitem">Switch user</button>
+              <button type="button" class="user-menu-item" id="signOutButton" role="menuitem">Sign out</button>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -103,6 +126,8 @@
       <section class="composer-section" aria-label="Add or edit a link">
         <form id="linkForm" class="composer-form" novalidate>
           <input type="hidden" id="editingId" />
+
+          <p class="eyebrow">ADD A LINK</p>
 
           <!-- Primary row: URL + Save button -->
           <div class="composer-row">
@@ -183,13 +208,8 @@
       <div class="list-status" id="listStatus" aria-live="polite" aria-atomic="true"></div>
 
       <section class="feed-toolbar" aria-label="Search and filter saved links">
-        <label class="search-wrap">
-          <span class="sr-only">Search links</span>
-          <input id="searchInput" class="search-input" type="search" placeholder="Search links, notes, and tags…" autocomplete="off" />
-        </label>
-        <button id="favoritesFilter" class="filter-button" type="button" aria-pressed="false">
-          <span aria-hidden="true">☆</span> Favorites
-        </button>
+        <p class="eyebrow">YOUR SHARED SHELF</p>
+        <div id="filterChips" class="filter-chips" role="group" aria-label="Filter links"></div>
       </section>
 
       <!-- ── Empty state ─────────────────────────────────────────── -->
@@ -215,6 +235,12 @@
 
     </div><!-- /app-view -->
 
+    <div class="toast hidden" id="toast" role="status" aria-live="polite" aria-atomic="true">
+      <span id="toastMessage"></span>
+      <span class="toast-separator" id="toastSeparator" aria-hidden="true">·</span>
+      <button class="toast-undo" id="toastUndo" type="button">Undo</button>
+    </div>
+
 
     <!-- ═══════════════════════════════════════════════════════════════
          TEMPLATES
@@ -223,34 +249,33 @@
     <!-- Day group -->
     <template id="tplDayGroup">
       <section class="day-group">
-        <h2 class="day-label"></h2>
+        <h2 class="day-label"><span class="day-title"></span><span class="day-count"></span></h2>
         <ol class="day-items" role="list"></ol>
       </section>
     </template>
 
     <!-- Link item -->
     <template id="linkTemplate">
-      <li class="link-item" role="listitem">
-        <!-- Partner initial badge -->
+      <li class="link-item" role="listitem" tabindex="0" aria-haspopup="dialog">
+        <!-- Site favicon tile -->
         <div class="link-attribution" aria-hidden="true">
-          <span class="saver-badge"></span>
+          <span class="favicon-tile">
+            <img class="site-favicon" alt="" loading="lazy" />
+            <svg class="favicon-fallback" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M10 13.5 8.7 14.8a3.4 3.4 0 0 1-4.8-4.8l3-3a3.4 3.4 0 0 1 4.8 0" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+              <path d="m14 10.5 1.3-1.3a3.4 3.4 0 0 1 4.8 4.8l-3 3a3.4 3.4 0 0 1-4.8 0" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+              <path d="m9 15 6-6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+            </svg>
+          </span>
         </div>
         <!-- Content -->
         <div class="link-body">
-          <a class="link-title" target="_blank" rel="noreferrer noopener"></a>
-          <span class="link-domain"></span>
-          <a class="site-preview hidden" target="_blank" rel="noreferrer noopener">
-            <img class="preview-image hidden" loading="lazy" referrerpolicy="no-referrer" alt="" />
-            <span class="preview-copy">
-              <span class="preview-site"></span>
-              <span class="preview-description"></span>
-            </span>
-          </a>
+          <span class="link-title"></span>
           <div class="link-tags hidden" aria-label="Tags"></div>
           <p class="link-note"></p>
           <span class="link-meta"></span>
         </div>
-        <!-- Edit / delete (only for saver) -->
+        <!-- Quick actions -->
         <div class="link-controls">
           <button
             class="ctrl-btn favorite-link"
@@ -258,32 +283,14 @@
             aria-label="Add to favorites"
             title="Add to favorites"
           >☆</button>
-          <button
-            class="ctrl-btn edit-link hidden"
-            type="button"
-            aria-label="Edit this link"
-            title="Edit"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-                 stroke="currentColor" stroke-width="2.2"
-                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          <button class="ctrl-btn copy-link" type="button" aria-label="Copy link" title="Copy link">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>
             </svg>
           </button>
-          <button
-            class="ctrl-btn delete-link hidden"
-            type="button"
-            aria-label="Delete this link"
-            title="Delete"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-                 stroke="currentColor" stroke-width="2.2"
-                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polyline points="3 6 5 6 21 6"/>
-              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-              <path d="M10 11v6"/>
-              <path d="M14 11v6"/>
+          <button class="ctrl-btn edit-link" type="button" aria-label="Edit link" title="Edit link">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m15 5 4 4M4 20l4.2-.9L19 8.3a2.1 2.1 0 0 0-3-3L5.2 16.1 4 20Z"/>
             </svg>
           </button>
         </div>
@@ -301,6 +308,63 @@
         </div>
       </div>
     </template>
+
+    <div class="link-peek hidden" id="linkPeek" role="tooltip" aria-hidden="true">
+      <div class="peek-image-wrap">
+        <img class="peek-image hidden" id="peekImage" alt="" />
+        <div class="peek-image-fallback hidden" id="peekImageFallback">
+          <img id="peekFavicon" alt="" />
+          <svg class="preview-fallback-glyph hidden" id="peekFallbackGlyph" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M10 13.5 8.7 14.8a3.4 3.4 0 0 1-4.8-4.8l3-3a3.4 3.4 0 0 1 4.8 0M14 10.5l1.3-1.3a3.4 3.4 0 0 1 4.8 4.8l-3 3a3.4 3.4 0 0 1-4.8 0M9 15l6-6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          <span id="peekFallbackDomain"></span>
+        </div>
+      </div>
+      <div class="peek-copy">
+        <h3 id="peekTitle"></h3>
+        <p class="peek-description hidden" id="peekDescription"></p>
+        <span class="peek-domain" id="peekDomain"></span>
+      </div>
+    </div>
+
+    <div class="preview-backdrop hidden" id="previewBackdrop">
+      <aside class="preview-panel" id="previewPanel" role="dialog" aria-modal="true" aria-labelledby="previewTitle" tabindex="-1">
+        <button class="preview-close" id="previewClose" type="button" aria-label="Close link preview">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+        <div class="preview-panel-scroll">
+          <div class="preview-hero">
+            <img class="preview-hero-image hidden" id="previewImage" alt="" />
+            <div class="preview-hero-fallback hidden" id="previewImageFallback">
+              <img id="previewFavicon" alt="" />
+            <svg class="preview-fallback-glyph hidden" id="previewFallbackGlyph" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M10 13.5 8.7 14.8a3.4 3.4 0 0 1-4.8-4.8l3-3a3.4 3.4 0 0 1 4.8 0M14 10.5l1.3-1.3a3.4 3.4 0 0 1 4.8 4.8l-3 3a3.4 3.4 0 0 1-4.8 0M9 15l6-6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+              <span id="previewFallbackDomain"></span>
+            </div>
+            <div class="preview-skeleton hidden" id="previewSkeleton" aria-hidden="true">
+              <span class="skeleton-block skeleton-block-image"></span>
+              <span class="skeleton-block skeleton-block-title"></span>
+              <span class="skeleton-block skeleton-block-description"></span>
+            </div>
+          </div>
+          <div class="preview-content">
+            <h2 id="previewTitle"></h2>
+            <div class="preview-loading-lines hidden" id="previewLoadingLines" aria-hidden="true">
+              <span class="skeleton-block skeleton-block-title"></span>
+              <span class="skeleton-block skeleton-block-description"></span>
+            </div>
+            <p class="preview-meta" id="previewMeta"></p>
+            <p class="preview-description hidden" id="previewDescription"></p>
+            <p class="preview-note hidden" id="previewNote"></p>
+            <div class="preview-tags hidden" id="previewTags" aria-label="Tags"></div>
+            <div class="preview-actions">
+              <a class="preview-open-site" id="previewOpenSite" target="_blank" rel="noopener noreferrer">Open site ↗</a>
+              <button class="preview-action" id="previewFavorite" type="button" data-panel-action="favorite">☆ Favorite</button>
+              <button class="preview-action" type="button" data-panel-action="copy">Copy link</button>
+              <button class="preview-action" type="button" data-panel-action="edit">Edit</button>
+              <button class="preview-action preview-delete" type="button" data-panel-action="delete">Delete</button>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
 
     <!-- Delete confirm dialog -->
     <dialog class="confirm-dialog" id="confirmDialog" aria-labelledby="confirmHeading" aria-describedby="confirmMsg">

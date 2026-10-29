@@ -6,29 +6,21 @@
 
 /* ── Session state ────────────────────────────────────────────────────── */
 const session = { name: "", code: "", links: [] };
-let favoritesOnly = false;
-
-/* ── Partner color palette (cycled by insertion order of unique names) ── */
-const PARTNER_PALETTE = [
-  { fg: "var(--p1)",      bg: "var(--p1-soft)" },   // sage
-  { fg: "var(--p2)",      bg: "var(--p2-soft)" },   // rose
-  { fg: "var(--p3)",      bg: "var(--p3-soft)" },   // slate
-  { fg: "var(--p4)",      bg: "var(--p4-soft)" },   // ochre
-];
-
-const partnerColorMap = new Map();
-
-function partnerColor(name) {
-  if (!partnerColorMap.has(name)) {
-    const idx = partnerColorMap.size % PARTNER_PALETTE.length;
-    partnerColorMap.set(name, PARTNER_PALETTE[idx]);
-  }
-  return partnerColorMap.get(name);
-}
-
-function nameInitial(name) {
-  return (name || "?").trim().charAt(0).toUpperCase();
-}
+let activeFilter = "all";
+const favoriteSaveQueues = new Map();
+const favoriteRevisions = new Map();
+const persistedFavorites = new Map();
+const favoriteRemovalTimers = new Map();
+let toastTimer = 0;
+let activeFavoriteToast = null;
+let activePreviewId = null;
+let previewOpener = null;
+let returnToPreviewId = null;
+let peekTimer = 0;
+let peekCloseTimer = 0;
+let activePeekId = null;
+let activePeekRow = null;
+const metadataLoads = new Map();
 
 /* ── DOM refs ─────────────────────────────────────────────────────────── */
 const $ = (id) => document.getElementById(id);
@@ -41,7 +33,13 @@ const el = {
   loginSubmitBtn:   $("loginSubmitBtn"),
   partnerName:      $("partnerName"),
   coupleCode:       $("coupleCode"),
-  logoutButton:     $("logoutButton"),
+  userMenuButton:   $("userMenuButton"),
+  userDropdown:     $("userDropdown"),
+  switchUserButton: $("switchUserButton"),
+  signOutButton:    $("signOutButton"),
+  userAvatar:       $("userAvatar"),
+  headerSearch:     $("headerSearch"),
+  mobileSearchToggle: $("mobileSearchToggle"),
   spaceLabel:       $("spaceLabel"),
   linkForm:         $("linkForm"),
   editingId:        $("editingId"),
@@ -59,10 +57,40 @@ const el = {
   skeletonFeed:     $("skeletonFeed"),
   listStatus:       $("listStatus"),
   searchInput:      $("searchInput"),
-  favoritesFilter:  $("favoritesFilter"),
+  filterChips:      $("filterChips"),
   noResults:        $("noResults"),
   confirmDialog:    $("confirmDialog"),
   confirmMsg:       $("confirmMsg"),
+  toast:            $("toast"),
+  toastMessage:     $("toastMessage"),
+  toastSeparator:   $("toastSeparator"),
+  toastUndo:        $("toastUndo"),
+  previewBackdrop:  $("previewBackdrop"),
+  previewPanel:     $("previewPanel"),
+  previewClose:     $("previewClose"),
+  previewTitle:     $("previewTitle"),
+  previewMeta:      $("previewMeta"),
+  previewDescription: $("previewDescription"),
+  previewNote:      $("previewNote"),
+  previewTags:      $("previewTags"),
+  previewImage:     $("previewImage"),
+  previewImageFallback: $("previewImageFallback"),
+  previewFavicon:   $("previewFavicon"),
+  previewFallbackGlyph: $("previewFallbackGlyph"),
+  previewFallbackDomain: $("previewFallbackDomain"),
+  previewSkeleton:  $("previewSkeleton"),
+  previewLoadingLines: $("previewLoadingLines"),
+  previewOpenSite:  $("previewOpenSite"),
+  previewFavorite:  $("previewFavorite"),
+  linkPeek:         $("linkPeek"),
+  peekImage:        $("peekImage"),
+  peekImageFallback: $("peekImageFallback"),
+  peekFavicon:      $("peekFavicon"),
+  peekFallbackGlyph: $("peekFallbackGlyph"),
+  peekFallbackDomain: $("peekFallbackDomain"),
+  peekTitle:        $("peekTitle"),
+  peekDescription:  $("peekDescription"),
+  peekDomain:       $("peekDomain"),
   tplDayGroup:      $("tplDayGroup"),
   tplLink:          $("linkTemplate"),
   tplSkeleton:      $("tplSkeleton"),
@@ -74,21 +102,57 @@ wireEvents();
 
 function wireEvents() {
   el.loginForm.addEventListener("submit", onLogin);
-  el.logoutButton.addEventListener("click", onLogout);
+  el.userMenuButton.addEventListener("click", () => {
+    const open = el.userDropdown.classList.contains("hidden");
+    closeUserMenu();
+    if (open) {
+      el.userDropdown.classList.remove("hidden");
+      el.userMenuButton.setAttribute("aria-expanded", "true");
+    }
+  });
+  el.switchUserButton.addEventListener("click", onSwitchUser);
+  el.signOutButton.addEventListener("click", onLogout);
+  el.mobileSearchToggle.addEventListener("click", toggleMobileSearch);
   el.linkForm.addEventListener("submit", onSaveLink);
-  el.cancelEditButton.addEventListener("click", resetComposer);
+  el.cancelEditButton.addEventListener("click", () => {
+    returnToPreviewId = null;
+    resetComposer();
+  });
+  el.toastUndo.addEventListener("click", undoFavoriteChange);
 
   // Reveal expanded fields when URL input is focused
   el.urlInput.addEventListener("focus", expandComposer);
 
   // Delegate edit / delete clicks on the feed
   el.linkFeed.addEventListener("click", onFeedClick);
-  el.searchInput.addEventListener("input", renderFeed);
-  el.favoritesFilter.addEventListener("click", () => {
-    favoritesOnly = !favoritesOnly;
-    el.favoritesFilter.setAttribute("aria-pressed", String(favoritesOnly));
-    el.favoritesFilter.querySelector("span").textContent = favoritesOnly ? "★" : "☆";
+  el.linkFeed.addEventListener("auxclick", onFeedAuxClick);
+  el.linkFeed.addEventListener("keydown", onFeedKeydown);
+  el.linkFeed.addEventListener("pointerover", onFeedPointerOver);
+  el.linkFeed.addEventListener("pointerout", onFeedPointerOut);
+  el.linkPeek.addEventListener("pointerenter", cancelPeekClose);
+  el.linkPeek.addEventListener("pointerleave", schedulePeekClose);
+  el.previewClose.addEventListener("click", () => closePreview());
+  el.previewBackdrop.addEventListener("click", (event) => {
+    if (event.target === el.previewBackdrop) closePreview();
+  });
+  el.previewPanel.addEventListener("click", onPreviewPanelClick);
+  el.filterChips.addEventListener("click", (event) => {
+    const chip = event.target.closest("[data-filter]");
+    if (!chip) return;
+    hideToast();
+    activeFilter = chip.dataset.filter;
     renderFeed();
+  });
+  el.searchInput.addEventListener("input", () => {
+    hideToast();
+    renderFeed();
+  });
+  document.addEventListener("keydown", onGlobalKeydown);
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".user-menu-wrap")) closeUserMenu();
+    if (window.matchMedia("(max-width: 599px)").matches && !event.target.closest(".header-search")) {
+      closeMobileSearch();
+    }
   });
 }
 
@@ -124,16 +188,21 @@ async function onLogin(e) {
 }
 
 function onLogout() {
+  closeUserMenu();
+  closePreview({ restoreFocus: false });
+  closePeek();
   localStorage.removeItem("sl.session");
   session.name  = "";
   session.code  = "";
   session.links = [];
-  favoritesOnly = false;
+  activeFilter = "all";
   el.searchInput.value = "";
-  el.favoritesFilter.setAttribute("aria-pressed", "false");
-  el.favoritesFilter.querySelector("span").textContent = "☆";
-  partnerColorMap.clear();
-
+  el.filterChips.textContent = "";
+  favoriteRevisions.clear();
+  persistedFavorites.clear();
+  for (const timer of favoriteRemovalTimers.values()) window.clearTimeout(timer);
+  favoriteRemovalTimers.clear();
+  hideToast();
   el.appView.classList.add("hidden");
   el.loginView.classList.remove("hidden");
   el.partnerName.value = "";
@@ -146,6 +215,12 @@ function onLogout() {
   el.noResults.classList.add("hidden");
 
   requestAnimationFrame(() => el.partnerName.focus());
+}
+
+function onSwitchUser() {
+  const sharedCode = session.code;
+  onLogout();
+  el.coupleCode.value = sharedCode;
 }
 
 function restoreSession() {
@@ -178,7 +253,45 @@ function showApp() {
   el.appView.classList.remove("hidden");
   el.spaceLabel.textContent = session.name;
   el.spaceLabel.setAttribute("aria-label", `Logged in as ${session.name}`);
+  el.userAvatar.textContent = session.name.trim().charAt(0).toLocaleUpperCase() || "?";
+  const avatarPalette = [
+    ["var(--p1-soft)", "var(--p1)"],
+    ["var(--p2-soft)", "var(--p2)"],
+    ["var(--p3-soft)", "var(--p3)"],
+    ["var(--p4-soft)", "var(--p4)"],
+  ];
+  let colorHash = 0;
+  for (const char of session.name) colorHash = (colorHash * 31 + char.charCodeAt(0)) >>> 0;
+  const [avatarBg, avatarFg] = avatarPalette[colorHash % avatarPalette.length];
+  el.userAvatar.style.setProperty("--avatar-bg", avatarBg);
+  el.userAvatar.style.setProperty("--avatar-fg", avatarFg);
   requestAnimationFrame(() => el.urlInput.focus());
+}
+
+function closeUserMenu() {
+  el.userDropdown.classList.add("hidden");
+  el.userMenuButton.setAttribute("aria-expanded", "false");
+}
+
+function openMobileSearch() {
+  el.headerSearch.classList.add("is-open");
+  el.mobileSearchToggle.setAttribute("aria-expanded", "true");
+  el.mobileSearchToggle.setAttribute("aria-label", "Close search");
+}
+
+function closeMobileSearch() {
+  el.headerSearch.classList.remove("is-open");
+  el.mobileSearchToggle.setAttribute("aria-expanded", "false");
+  el.mobileSearchToggle.setAttribute("aria-label", "Open search");
+}
+
+function toggleMobileSearch() {
+  if (el.headerSearch.classList.contains("is-open")) {
+    closeMobileSearch();
+  } else {
+    openMobileSearch();
+    el.searchInput.focus();
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════════════
@@ -207,16 +320,23 @@ function hideSkeleton() {
 async function loadLinks() {
   const data = await api("/api/links");
   session.links = data.links;
+  persistedFavorites.clear();
+  favoriteRevisions.clear();
+  for (const link of session.links) persistedFavorites.set(link.id, Boolean(link.isFavorite));
   hideSkeleton();
   renderFeed();
 }
 
 function renderFeed() {
+  closePeek();
   el.linkFeed.textContent = "";
+  renderFilterChips();
   el.emptyState.classList.toggle("hidden", session.links.length > 0);
   const query = el.searchInput.value.trim().toLocaleLowerCase();
   const visibleLinks = session.links.filter((link) => {
-    if (favoritesOnly && !link.isFavorite) return false;
+    if (activeFilter === "mine" && link.saverName !== session.name) return false;
+    if (activeFilter === "favorites" && !link.isFavorite) return false;
+    if (activeFilter.startsWith("person:") && link.saverName !== activeFilter.slice(7)) return false;
     if (!query) return true;
     const searchable = [
       link.title, link.url, link.note, link.description, link.siteName,
@@ -226,7 +346,7 @@ function renderFeed() {
   });
   el.noResults.classList.toggle("hidden", session.links.length === 0 || visibleLinks.length > 0);
   if (session.links.length > 0 && visibleLinks.length === 0) {
-    el.noResults.textContent = favoritesOnly && !query
+    el.noResults.textContent = activeFilter === "favorites" && !query
       ? "No favorites yet. Tap the star on a link to save it here."
       : "No links match this search.";
   }
@@ -247,7 +367,8 @@ function renderFeed() {
   for (const { label, isRecent, links } of groups.values()) {
     const groupFrag = el.tplDayGroup.content.cloneNode(true);
     const heading   = groupFrag.querySelector(".day-label");
-    heading.textContent = label;
+    heading.querySelector(".day-title").textContent = label;
+    heading.querySelector(".day-count").textContent = `${links.length} ${links.length === 1 ? "link" : "links"}`;
     if (isRecent) heading.setAttribute("data-recent", "");
 
     const container = groupFrag.querySelector(".day-items");
@@ -260,54 +381,60 @@ function renderFeed() {
   }
 }
 
+function renderFilterChips() {
+  const people = [...new Set(session.links.map((link) => link.saverName))];
+  const mineCount = session.links.filter((link) => link.saverName === session.name).length;
+  const filters = [
+    { key: "all", label: "All", count: session.links.length },
+    { key: "mine", label: "Mine", count: mineCount },
+    ...people.filter((name) => name !== session.name).map((name) => ({
+      key: `person:${name}`,
+      label: name,
+      count: session.links.filter((link) => link.saverName === name).length,
+    })),
+    { key: "favorites", label: "★ Favorites", count: session.links.filter((link) => link.isFavorite).length },
+  ];
+  el.filterChips.textContent = "";
+  for (const filter of filters) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "filter-chip";
+    button.dataset.filter = filter.key;
+    button.setAttribute("aria-pressed", String(activeFilter === filter.key));
+    button.append(document.createTextNode(filter.label));
+    const count = document.createElement("span");
+    count.className = "filter-count";
+    count.textContent = String(filter.count);
+    button.append(count);
+    el.filterChips.append(button);
+  }
+}
+
 function buildLinkItem(link, index = 0) {
   const frag  = el.tplLink.content.cloneNode(true);
   const item  = frag.querySelector(".link-item");
-  const badge = frag.querySelector(".saver-badge");
+  const faviconTile = frag.querySelector(".favicon-tile");
+  const favicon = frag.querySelector(".site-favicon");
   const title = frag.querySelector(".link-title");
-  const domain= frag.querySelector(".link-domain");
   const note  = frag.querySelector(".link-note");
   const meta  = frag.querySelector(".link-meta");
   const editBtn = frag.querySelector(".edit-link");
-  const delBtn  = frag.querySelector(".delete-link");
   const favoriteBtn = frag.querySelector(".favorite-link");
-  const preview = frag.querySelector(".site-preview");
-  const previewImage = frag.querySelector(".preview-image");
-  const previewSite = frag.querySelector(".preview-site");
-  const previewDescription = frag.querySelector(".preview-description");
   const tags = frag.querySelector(".link-tags");
 
   item.dataset.id = link.id;
+  const displayTitle = displayTitleFor(link);
+  item.setAttribute("aria-label", `Preview ${displayTitle}`);
 
   // Stagger entrance animation
   item.style.animationDelay = `${Math.min(index * 40, 280)}ms`;
 
-  // Partner badge — initial + color
-  const color = partnerColor(link.saverName);
-  badge.textContent = nameInitial(link.saverName);
-  badge.style.setProperty("--badge-fg", color.fg);
-  badge.style.setProperty("--badge-bg", color.bg);
-  badge.setAttribute("title",      `Saved by ${link.saverName}`);
-  badge.setAttribute("aria-label", `Saved by ${link.saverName}`);
+  // Use the site's own favicon with a local link glyph if it has no icon.
+  favicon.src = link.faviconUrl || new URL("/favicon.ico", link.url).href;
+  favicon.addEventListener("error", () => faviconTile.classList.add("is-fallback"), { once: true });
 
   // Link content
-  title.href        = link.url;
-  title.textContent = link.title || link.url;
-  title.setAttribute("aria-label", `${link.title || link.url} — opens in new tab`);
-  domain.textContent = domainOf(link.url);
-
-  if (link.previewImage || link.description || link.siteName) {
-    preview.href = link.url;
-    preview.classList.remove("hidden");
-    previewSite.textContent = link.siteName || domainOf(link.url);
-    previewDescription.textContent = link.description || "Open this link to see more.";
-    if (link.previewImage) {
-      previewImage.src = link.previewImage;
-      previewImage.alt = "";
-      previewImage.classList.remove("hidden");
-      previewImage.addEventListener("error", () => previewImage.classList.add("hidden"), { once: true });
-    }
-  }
+  title.textContent = displayTitle;
 
   const linkTags = Array.isArray(link.tags) ? link.tags : [];
   if (linkTags.length) {
@@ -326,28 +453,41 @@ function buildLinkItem(link, index = 0) {
     note.remove();
   }
 
-  // Meta: "Saver · time"
+  // Compact metadata: "domain · author · time"
+  const domainSpan = document.createElement("a");
+  domainSpan.className = "link-domain-open";
+  domainSpan.href = link.url;
+  domainSpan.target = "_blank";
+  domainSpan.rel = "noopener noreferrer";
+  domainSpan.textContent = domainOf(link.url);
+  const openIcon = document.createElement("span");
+  openIcon.setAttribute("aria-hidden", "true");
+  openIcon.textContent = " ↗";
+  domainSpan.append(openIcon);
   const saverSpan = document.createElement("span");
   saverSpan.textContent = link.saverName;
-
-  const sep = document.createElement("span");
-  sep.className   = "meta-sep";
-  sep.setAttribute("aria-hidden", "true");
 
   const timeSpan = document.createElement("time");
   timeSpan.dateTime = link.createdAt;
   timeSpan.textContent = formatTime(link.createdAt);
 
-  meta.append(saverSpan, sep, timeSpan);
+  for (const [index, part] of [domainSpan, saverSpan, timeSpan].entries()) {
+    if (index) {
+      const sep = document.createElement("span");
+      sep.className = "meta-sep";
+      sep.setAttribute("aria-hidden", "true");
+      meta.append(sep);
+    }
+    meta.append(part);
+  }
 
-  // Controls — only for the saver
+  // Editing and deletion stay limited to the original saver.
   const isMine = link.saverName === session.name;
   favoriteBtn.textContent = link.isFavorite ? "★" : "☆";
   favoriteBtn.setAttribute("aria-pressed", String(Boolean(link.isFavorite)));
   favoriteBtn.setAttribute("aria-label", link.isFavorite ? "Remove from favorites" : "Add to favorites");
   favoriteBtn.title = link.isFavorite ? "Remove from favorites" : "Add to favorites";
   editBtn.classList.toggle("hidden", !isMine);
-  delBtn.classList.toggle("hidden", !isMine);
 
   return frag;
 }
@@ -357,8 +497,8 @@ function buildLinkItem(link, index = 0) {
 ══════════════════════════════════════════════════════════════════════ */
 async function onFeedClick(e) {
   const editBtn = e.target.closest(".edit-link");
-  const delBtn  = e.target.closest(".delete-link");
   const favoriteBtn = e.target.closest(".favorite-link");
+  const copyBtn = e.target.closest(".copy-link");
   const item    = e.target.closest(".link-item");
 
   if (!item) return;
@@ -366,31 +506,26 @@ async function onFeedClick(e) {
   const link = session.links.find((l) => l.id === Number(item.dataset.id));
   if (!link) return;
 
-  if (favoriteBtn) {
-    favoriteBtn.disabled = true;
-    const previousFavorite = Boolean(link.isFavorite);
-    link.isFavorite = !previousFavorite;
-    renderFeed();
+  if (e.target.closest("a")) return;
+  if ((e.ctrlKey || e.metaKey) && !e.target.closest("button, input, textarea, select")) {
+    e.preventDefault();
+    window.open(link.url, "_blank", "noopener,noreferrer");
+    return;
+  }
+
+  if (copyBtn) {
     try {
-      const result = await api(
-        `/api/links/${link.id}?favorite=${link.isFavorite}`,
-        {
-          method: "PATCH",
-          headers: {
-            "x-sharelink-action": "favorite",
-            "x-sharelink-favorite": String(link.isFavorite),
-          },
-        }
-      );
-      const index = session.links.findIndex((entry) => entry.id === link.id);
-      if (index !== -1) session.links[index] = result.link;
-      renderFeed();
-      setStatus(result.link.isFavorite ? "Added to favorites." : "Removed from favorites.");
-    } catch (err) {
-      link.isFavorite = previousFavorite;
-      renderFeed();
-      showStatusError(err.message || "Could not update favorite.");
+      await navigator.clipboard.writeText(link.url);
+      setStatus("Link copied.");
+    } catch {
+      showStatusError("Could not copy this link.");
     }
+    return;
+  }
+
+  if (favoriteBtn) {
+    const previousFavorite = Boolean(link.isFavorite);
+    setFavorite(link, !previousFavorite, { showToast: true, previousFavorite });
     return;
   }
 
@@ -399,26 +534,483 @@ async function onFeedClick(e) {
     return;
   }
 
-  if (delBtn) {
-    const confirmed = await showConfirm(
-      `"${link.title || link.url}" will be removed from your shared space.`
-    );
-    if (!confirmed) return;
+  window.open(link.url, "_blank", "noopener,noreferrer");
+}
 
-    try {
-      await api(`/api/links/${link.id}`, { method: "DELETE" });
-      // Optimistic: fade item out then reload
-      const itemEl = el.linkFeed.querySelector(`[data-id="${link.id}"]`);
-      if (itemEl) {
-        itemEl.style.transition = "opacity 200ms ease, transform 200ms ease";
-        itemEl.style.opacity = "0";
-        itemEl.style.transform = "translateX(-8px)";
-        await new Promise((r) => setTimeout(r, 200));
-      }
-      await loadLinks();
-    } catch (err) {
-      showStatusError(err.message || "Could not delete. Please try again.");
+function onFeedAuxClick(event) {
+  if (event.button !== 1) return;
+  const item = event.target.closest(".link-item");
+  if (!item || event.target.closest("a, button")) return;
+  const link = session.links.find((entry) => entry.id === Number(item.dataset.id));
+  if (!link) return;
+  event.preventDefault();
+  window.open(link.url, "_blank", "noopener,noreferrer");
+}
+
+function onFeedKeydown(event) {
+  const item = event.target.closest(".link-item");
+  if (!item || event.target !== item || !["Enter", " "].includes(event.key)) return;
+  event.preventDefault();
+  const link = session.links.find((entry) => entry.id === Number(item.dataset.id));
+  if (link) openPreview(link, item);
+}
+
+function onGlobalKeydown(event) {
+  if (activePreviewId !== null) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closePreview();
+      return;
     }
+    if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+      event.preventDefault();
+      movePreview(event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+    if (event.key === "Tab") trapPreviewFocus(event);
+    return;
+  }
+
+  if (event.key === "Escape") {
+    if (activePeekId !== null) closePeek();
+    const userMenuWasOpen = !el.userDropdown.classList.contains("hidden");
+    closeUserMenu();
+    if (userMenuWasOpen) el.userMenuButton.focus();
+    const mobileSearchWasOpen = el.headerSearch.classList.contains("is-open");
+    closeMobileSearch();
+    if (mobileSearchWasOpen) el.mobileSearchToggle.focus();
+  }
+  if (event.key === "/" && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    const target = event.target;
+    const isTypingElsewhere = target instanceof HTMLElement && target !== el.searchInput &&
+      (target.matches("input, textarea, select") || target.isContentEditable);
+    if (isTypingElsewhere) return;
+    event.preventDefault();
+    if (window.matchMedia("(max-width: 599px)").matches) openMobileSearch();
+    el.searchInput.focus();
+  }
+}
+
+function openPreview(link, opener, { focus = true } = {}) {
+  closePeek();
+  const isAlreadyOpen = !el.previewBackdrop.classList.contains("hidden");
+  activePreviewId = link.id;
+  if (!isAlreadyOpen) previewOpener = opener;
+  el.previewBackdrop.classList.remove("hidden");
+  document.body.classList.add("preview-open");
+  renderPreviewPanel(link);
+  if (!link.metadataFetchedAt) ensurePreviewMetadata(link);
+  if (focus && !isAlreadyOpen) requestAnimationFrame(() => el.previewPanel.focus());
+}
+
+function closePreview({ restoreFocus = true } = {}) {
+  if (el.previewBackdrop.classList.contains("hidden")) return;
+  el.previewBackdrop.classList.add("hidden");
+  document.body.classList.remove("preview-open");
+  activePreviewId = null;
+  const opener = previewOpener;
+  if (restoreFocus) requestAnimationFrame(() => opener?.isConnected ? opener.focus() : el.searchInput.focus());
+  previewOpener = null;
+}
+
+function renderPreviewPanel(link) {
+  el.previewTitle.textContent = displayTitleFor(link);
+  el.previewMeta.textContent = `${domainOf(link.url)} · ${link.saverName} · ${formatTime(link.createdAt)}`;
+  el.previewOpenSite.href = link.url;
+  el.previewDescription.textContent = link.description || "";
+  el.previewDescription.classList.toggle("hidden", !link.description);
+  el.previewNote.textContent = link.note || "";
+  el.previewNote.classList.toggle("hidden", !link.note);
+  el.previewSkeleton.classList.toggle("hidden", Boolean(link.metadataFetchedAt));
+  el.previewLoadingLines.classList.toggle("hidden", Boolean(link.metadataFetchedAt));
+  setImageFrame(
+    el.previewImage,
+    el.previewImageFallback,
+    el.previewFavicon,
+    el.previewFallbackGlyph,
+    el.previewFallbackDomain,
+    link.previewImage,
+    link.faviconUrl || faviconFor(link.url),
+    domainOf(link.url),
+  );
+
+  el.previewTags.textContent = "";
+  const tags = Array.isArray(link.tags) ? link.tags : [];
+  el.previewTags.classList.toggle("hidden", !tags.length);
+  for (const tag of tags) {
+    const chip = document.createElement("span");
+    chip.className = "tag-chip";
+    chip.textContent = tag;
+    el.previewTags.append(chip);
+  }
+
+  const isMine = link.saverName === session.name;
+  el.previewFavorite.textContent = link.isFavorite ? "★ Favorited" : "☆ Favorite";
+  el.previewFavorite.setAttribute("aria-pressed", String(Boolean(link.isFavorite)));
+  el.previewFavorite.setAttribute("aria-label", link.isFavorite ? "Remove from favorites" : "Add to favorites");
+  el.previewPanel.querySelector('[data-panel-action="edit"]').classList.toggle("hidden", !isMine);
+  el.previewPanel.querySelector('[data-panel-action="delete"]').classList.toggle("hidden", !isMine);
+}
+
+function ensurePreviewMetadata(link) {
+  if (link.metadataFetchedAt || metadataLoads.has(link.id)) return metadataLoads.get(link.id);
+  const request = api(`/api/links/${link.id}/metadata`, { method: "POST" })
+    .then(({ link: updated }) => {
+      Object.assign(link, {
+        ogTitle: updated.ogTitle,
+        previewImage: updated.previewImage,
+        description: updated.description,
+        siteName: updated.siteName,
+        faviconUrl: updated.faviconUrl,
+        metadataFetchedAt: updated.metadataFetchedAt,
+      });
+      if (activePreviewId === link.id) renderPreviewPanel(link);
+    })
+    .catch(() => {
+      // Leave the saved title and domain visible if the metadata service is unavailable.
+      link.metadataFetchedAt = new Date().toISOString();
+      if (activePreviewId === link.id) renderPreviewPanel(link);
+    })
+    .finally(() => metadataLoads.delete(link.id));
+  metadataLoads.set(link.id, request);
+  return request;
+}
+
+function displayTitleFor(link) {
+  if (link.title && link.title !== link.url) return link.title;
+  return link.ogTitle || link.title || link.url;
+}
+
+function faviconFor(url) {
+  try { return new URL("/favicon.ico", url).href; } catch { return ""; }
+}
+
+function setImageFrame(image, fallback, favicon, fallbackGlyph, domainLabel, imageUrl, faviconUrl, domain) {
+  image.onerror = () => {
+    image.classList.add("hidden");
+    fallback.classList.remove("hidden");
+  };
+  image.onload = () => fallback.classList.add("hidden");
+  favicon.onerror = () => {
+    favicon.classList.add("hidden");
+    fallbackGlyph.classList.remove("hidden");
+  };
+  favicon.onload = () => {
+    favicon.classList.remove("hidden");
+    fallbackGlyph.classList.add("hidden");
+  };
+  favicon.classList.remove("hidden");
+  fallbackGlyph.classList.add("hidden");
+  favicon.src = faviconUrl || "";
+  domainLabel.textContent = domain;
+  if (imageUrl) {
+    image.src = imageUrl;
+    image.classList.remove("hidden");
+    fallback.classList.add("hidden");
+  } else {
+    image.removeAttribute("src");
+    image.classList.add("hidden");
+    fallback.classList.remove("hidden");
+  }
+}
+
+function movePreview(direction) {
+  const rows = [...el.linkFeed.querySelectorAll(".link-item")];
+  const currentIndex = rows.findIndex((row) => Number(row.dataset.id) === activePreviewId);
+  const nextRow = rows[currentIndex + direction];
+  if (!nextRow) return;
+  const nextLink = session.links.find((link) => link.id === Number(nextRow.dataset.id));
+  if (nextLink) openPreview(nextLink, nextRow, { focus: false });
+}
+
+function trapPreviewFocus(event) {
+  const focusables = [...el.previewPanel.querySelectorAll('a[href], button:not(:disabled), [tabindex]:not([tabindex="-1"])')]
+    .filter((element) => !element.classList.contains("hidden") && element.getClientRects().length);
+  if (!focusables.length) {
+    event.preventDefault();
+    el.previewPanel.focus();
+    return;
+  }
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  if (event.shiftKey && (document.activeElement === first || !el.previewPanel.contains(document.activeElement))) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && (document.activeElement === last || !el.previewPanel.contains(document.activeElement))) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function onPreviewPanelClick(event) {
+  const button = event.target.closest("[data-panel-action]");
+  if (!button) return;
+  const link = session.links.find((entry) => entry.id === activePreviewId);
+  if (!link) return;
+  const action = button.dataset.panelAction;
+  if (action === "favorite") {
+    setFavorite(link, !link.isFavorite, { showToast: true, previousFavorite: link.isFavorite });
+  } else if (action === "copy") {
+    navigator.clipboard.writeText(link.url)
+      .then(() => showToast("Link copied."))
+      .catch(() => showToast("Could not copy this link.", null, true));
+  } else if (action === "edit") {
+    returnToPreviewId = link.id;
+    closePreview({ restoreFocus: false });
+    startEdit(link);
+  } else if (action === "delete") {
+    deleteLinkFromPreview(link);
+  }
+}
+
+async function deleteLinkFromPreview(link) {
+  const confirmed = await showConfirm(`"${displayTitleFor(link)}" will be removed from your shared space.`);
+  if (!confirmed) return;
+  try {
+    await api(`/api/links/${link.id}`, { method: "DELETE" });
+    closePreview({ restoreFocus: false });
+    await loadLinks();
+    const firstRow = el.linkFeed.querySelector(".link-item");
+    (firstRow || el.searchInput).focus();
+  } catch (error) {
+    showToast(error.message || "Could not delete. Please try again.", null, true);
+  }
+}
+
+function onFeedPointerOver(event) {
+  if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+  const row = event.target.closest(".link-item");
+  if (!row || (event.relatedTarget instanceof Node && row.contains(event.relatedTarget))) return;
+  const link = session.links.find((entry) => entry.id === Number(row.dataset.id));
+  if (!link || activePeekId === link.id) return;
+  window.clearTimeout(peekCloseTimer);
+  window.clearTimeout(peekTimer);
+  peekTimer = window.setTimeout(() => showPeek(link, row), 400);
+}
+
+function onFeedPointerOut(event) {
+  const row = event.target.closest(".link-item");
+  if (!row || (event.relatedTarget instanceof Node && row.contains(event.relatedTarget))) return;
+  if (event.relatedTarget && el.linkPeek.contains(event.relatedTarget)) return;
+  schedulePeekClose();
+}
+
+function showPeek(link, row) {
+  if (activePreviewId !== null) return;
+  activePeekId = link.id;
+  activePeekRow = row;
+  el.peekTitle.textContent = displayTitleFor(link);
+  el.peekDescription.textContent = link.description || "";
+  el.peekDescription.classList.toggle("hidden", !link.description);
+  el.peekDomain.textContent = domainOf(link.url);
+  setImageFrame(
+    el.peekImage,
+    el.peekImageFallback,
+    el.peekFavicon,
+    el.peekFallbackGlyph,
+    el.peekFallbackDomain,
+    link.previewImage,
+    link.faviconUrl || faviconFor(link.url),
+    domainOf(link.url),
+  );
+  el.linkPeek.classList.remove("hidden");
+  el.linkPeek.setAttribute("aria-hidden", "false");
+
+  const rowRect = row.getBoundingClientRect();
+  const peekRect = el.linkPeek.getBoundingClientRect();
+  const width = 320;
+  const gap = 12;
+  const right = rowRect.right + gap;
+  const left = right + width <= window.innerWidth - 12
+    ? right
+    : Math.max(12, rowRect.left - width - gap);
+  const top = Math.max(12, Math.min(rowRect.top, window.innerHeight - peekRect.height - 12));
+  el.linkPeek.style.left = `${left}px`;
+  el.linkPeek.style.top = `${top}px`;
+}
+
+function cancelPeekClose() {
+  window.clearTimeout(peekCloseTimer);
+}
+
+function schedulePeekClose() {
+  window.clearTimeout(peekTimer);
+  cancelPeekClose();
+  peekCloseTimer = window.setTimeout(closePeek, 150);
+}
+
+function closePeek() {
+  window.clearTimeout(peekTimer);
+  window.clearTimeout(peekCloseTimer);
+  peekTimer = 0;
+  peekCloseTimer = 0;
+  activePeekId = null;
+  activePeekRow = null;
+  el.linkPeek.classList.add("hidden");
+  el.linkPeek.setAttribute("aria-hidden", "true");
+}
+
+function setFavorite(link, isFavorite, { showToast: shouldShowToast = false, previousFavorite = link.isFavorite } = {}) {
+  if (Boolean(link.isFavorite) === isFavorite) return;
+
+  link.isFavorite = isFavorite;
+  const revision = (favoriteRevisions.get(link.id) ?? 0) + 1;
+  favoriteRevisions.set(link.id, revision);
+  const row = updateFavoriteRow(link);
+
+  const isRemovingFromFavorites = activeFilter === "favorites" && !isFavorite;
+  if (row) row.classList.toggle("favorite-pending-removal", isRemovingFromFavorites && shouldShowToast);
+  if (isFavorite || !isRemovingFromFavorites || !shouldShowToast) clearFavoriteRemovalTimer(link.id);
+
+  if (shouldShowToast && isFavorite) {
+    showToast("Added to favorites", {
+      type: "added",
+      linkId: link.id,
+      previousFavorite,
+    });
+  } else if (shouldShowToast && isRemovingFromFavorites) {
+    showToast("Removed from favorites", {
+      type: "removed",
+      linkId: link.id,
+      previousFavorite,
+    });
+    scheduleFavoriteRemoval(link.id);
+  } else if (!isFavorite && activeFilter === "favorites") {
+    hideToast();
+    removeFavoriteRow(link.id);
+  }
+
+  persistFavorite(link, isFavorite, revision, previousFavorite);
+}
+
+function updateFavoriteRow(link) {
+  const row = el.linkFeed.querySelector(`[data-id="${link.id}"]`);
+  const button = row?.querySelector(".favorite-link");
+  if (button) {
+    button.textContent = link.isFavorite ? "★" : "☆";
+    button.setAttribute("aria-pressed", String(Boolean(link.isFavorite)));
+    button.setAttribute("aria-label", link.isFavorite ? "Remove from favorites" : "Add to favorites");
+    button.title = link.isFavorite ? "Remove from favorites" : "Add to favorites";
+  }
+  updateFavoritesCount();
+  if (activePreviewId === link.id) updatePreviewFavorite(link);
+  return row;
+}
+
+function updatePreviewFavorite(link) {
+  el.previewFavorite.textContent = link.isFavorite ? "★ Favorited" : "☆ Favorite";
+  el.previewFavorite.setAttribute("aria-pressed", String(Boolean(link.isFavorite)));
+  el.previewFavorite.setAttribute("aria-label", link.isFavorite ? "Remove from favorites" : "Add to favorites");
+}
+
+function updateFavoritesCount() {
+  const chip = el.filterChips.querySelector('[data-filter="favorites"] .filter-count');
+  if (chip) chip.textContent = String(session.links.filter((link) => link.isFavorite).length);
+}
+
+function persistFavorite(link, isFavorite, revision, previousFavorite) {
+  const priorSave = favoriteSaveQueues.get(link.id) ?? Promise.resolve();
+  const requestHeaders = {
+    "x-partner-name": session.name,
+    "x-couple-code": session.code,
+  };
+  const save = priorSave.catch(() => {}).then(async () => {
+    await api(`/api/links/${link.id}/favorite`, {
+      method: "POST",
+      body: { isFavorite },
+      headers: requestHeaders,
+      includeAuth: false,
+    });
+    persistedFavorites.set(link.id, isFavorite);
+  }).catch((error) => {
+    if (favoriteRevisions.get(link.id) !== revision) return;
+    link.isFavorite = persistedFavorites.get(link.id) ?? previousFavorite;
+    const row = updateFavoriteRow(link);
+    const remainsPending = !link.isFavorite && activeFilter === "favorites";
+    if (row) row.classList.toggle("favorite-pending-removal", remainsPending);
+    hideToast();
+    showToast(error.message || "Could not update favorite.", remainsPending
+      ? { type: "removed", linkId: link.id, undo: false }
+      : null, true);
+    if (remainsPending) scheduleFavoriteRemoval(link.id);
+  }).finally(() => {
+    if (favoriteSaveQueues.get(link.id) === save) favoriteSaveQueues.delete(link.id);
+    if (!link.isFavorite && activeFilter === "favorites" && rowIsPendingRemoval(link.id) && activeFavoriteToast?.linkId !== link.id) {
+      removeFavoriteRow(link.id);
+    }
+  });
+  favoriteSaveQueues.set(link.id, save);
+}
+
+function rowIsPendingRemoval(linkId) {
+  return Boolean(el.linkFeed.querySelector(`[data-id="${linkId}"].favorite-pending-removal`));
+}
+
+function showToast(message, favoriteAction = null, isError = false) {
+  window.clearTimeout(toastTimer);
+  activeFavoriteToast = favoriteAction;
+  el.toastMessage.textContent = message;
+  const hasUndo = Boolean(favoriteAction && favoriteAction.undo !== false);
+  el.toastUndo.classList.toggle("hidden", !hasUndo);
+  el.toastSeparator.classList.toggle("hidden", !hasUndo);
+  el.toast.classList.toggle("is-error", isError);
+  el.toast.classList.remove("hidden");
+  toastTimer = window.setTimeout(() => {
+    hideToast();
+  }, 5000);
+}
+
+function scheduleFavoriteRemoval(linkId) {
+  clearFavoriteRemovalTimer(linkId);
+  favoriteRemovalTimers.set(linkId, window.setTimeout(() => {
+    favoriteRemovalTimers.delete(linkId);
+    expireFavoriteRemoval(linkId);
+  }, 5000));
+}
+
+function clearFavoriteRemovalTimer(linkId) {
+  const timer = favoriteRemovalTimers.get(linkId);
+  if (timer) window.clearTimeout(timer);
+  favoriteRemovalTimers.delete(linkId);
+}
+
+function hideToast() {
+  window.clearTimeout(toastTimer);
+  toastTimer = 0;
+  activeFavoriteToast = null;
+  el.toast.classList.add("hidden");
+  el.toast.classList.remove("is-error");
+}
+
+function undoFavoriteChange() {
+  const action = activeFavoriteToast;
+  if (!action) return;
+  hideToast();
+  const link = session.links.find((entry) => entry.id === action.linkId);
+  if (link) setFavorite(link, action.previousFavorite, { showToast: false });
+}
+
+function expireFavoriteRemoval(linkId) {
+  const removeIfStillPending = () => {
+    const link = session.links.find((entry) => entry.id === linkId);
+    if (activeFilter === "favorites" && link && !link.isFavorite && rowIsPendingRemoval(linkId)) {
+      removeFavoriteRow(linkId);
+    }
+  };
+  const save = favoriteSaveQueues.get(linkId);
+  if (save) save.then(removeIfStillPending);
+  else removeIfStillPending();
+}
+
+function removeFavoriteRow(linkId) {
+  const row = el.linkFeed.querySelector(`[data-id="${linkId}"]`);
+  if (!row) return;
+  const group = row.closest(".day-group");
+  row.remove();
+  if (group && !group.querySelector(".link-item")) group.remove();
+  if (activeFilter === "favorites" && !el.linkFeed.querySelector(".link-item")) {
+    el.noResults.textContent = "No favorites yet. Tap the star on a link to save it here.";
+    el.noResults.classList.remove("hidden");
   }
 }
 
@@ -474,8 +1066,15 @@ async function onSaveLink(e) {
       setInputInvalid(el.urlInput, true);
       return;
     }
+    const previewAfterSave = returnToPreviewId === Number(editingId) ? Number(editingId) : null;
     resetComposer();
     await loadLinks();
+    if (previewAfterSave !== null) {
+      returnToPreviewId = null;
+      const updated = session.links.find((link) => link.id === previewAfterSave);
+      const row = el.linkFeed.querySelector(`[data-id="${previewAfterSave}"]`);
+      if (updated && row) openPreview(updated, row);
+    }
     clearStatus();
   }, el.linkError);
 
