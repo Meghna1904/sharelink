@@ -109,6 +109,16 @@ async function routeApi(
     return;
   }
 
+  if (req.method === "POST" && url.pathname === "/api/preview-metadata") {
+    const body = await readJsonBody(req) as Record<string, unknown> | null;
+    const targetUrl = normalizeUrl(body?.["url"]);
+    if (!targetUrl) { sendJson(res, 400, { error: "Enter a valid http or https URL." }); return; }
+    let metadata = emptyPageMetadata();
+    try { metadata = await ctx.metadataFetcher(targetUrl); } catch { /* Preview still shows its domain if a site blocks metadata. */ }
+    sendJson(res, 200, { metadata });
+    return;
+  }
+
   // GET /api/links
   if (req.method === "GET" && url.pathname === "/api/links") {
     const rows = await ctx.db.all<Link>(`
@@ -139,8 +149,8 @@ async function routeApi(
       return;
     }
 
-    const existingLinks = await ctx.db.all<{ id: number; url: string; title: string }>(
-      "SELECT id, url, title FROM links WHERE couple_id = $1", [auth.couple.id]
+    const existingLinks = await ctx.db.all<{ id: number; url: string; title: string; saverName: string; createdAt: string }>(
+      'SELECT id, url, title, saver_name AS "saverName", created_at AS "createdAt" FROM links WHERE couple_id = $1', [auth.couple.id]
     );
     const duplicate = existingLinks.find((link) => canonicalizeUrl(link.url) === canonicalizeUrl(parsed.url!));
     if (duplicate) {
@@ -184,6 +194,24 @@ async function routeApi(
     const id = Number(favoriteMatch[1]);
     const existing = await getLink(ctx.db, auth.couple.id, id, auth.name);
     if (!existing) { sendJson(res, 404, { error: "Link not found." }); return; }
+
+    // Vercel's Node adapter can omit the streamed body. Accept the same
+    // explicit headers used by the link PATCH fallback, while keeping JSON
+    // bodies supported for the local server and existing clients.
+    const vercelQuery = (req as IncomingMessage & { query?: Record<string, unknown> }).query;
+    const headerFavorite = req.headers["x-sharelink-favorite"];
+    const headerAction = req.headers["x-sharelink-action"];
+    const favoriteParam = headerAction === "favorite" &&
+      (headerFavorite === "true" || headerFavorite === "false")
+      ? headerFavorite
+      : url.searchParams.get("favorite") ??
+        (typeof vercelQuery?.["favorite"] === "string" ? vercelQuery["favorite"] : null);
+    if (favoriteParam === "true" || favoriteParam === "false") {
+      await setFavorite(ctx.db, id, auth.name, favoriteParam === "true");
+      sendJson(res, 200, { link: await getLink(ctx.db, auth.couple.id, id, auth.name) });
+      return;
+    }
+
     const body = await readJsonBody(req) as Record<string, unknown> | null;
     if (typeof body?.["isFavorite"] !== "boolean") {
       sendJson(res, 400, { error: "Choose whether this link is a favorite." });

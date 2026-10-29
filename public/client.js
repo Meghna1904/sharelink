@@ -7,6 +7,10 @@
 /* ── Session state ────────────────────────────────────────────────────── */
 const session = { name: "", code: "", links: [] };
 let activeFilter = "all";
+let activeTag = null;
+let metadataPreviewTimer = 0;
+let metadataPreviewRevision = 0;
+let autoFetchedTitle = "";
 const favoriteSaveQueues = new Map();
 const favoriteRevisions = new Map();
 const persistedFavorites = new Map();
@@ -52,6 +56,15 @@ const el = {
   saveBtnLabel:     $("saveBtnLabel"),
   cancelEditButton: $("cancelEditButton"),
   composerExtra:    $("composerExtra"),
+  extrasToggle:     $("extrasToggle"),
+  composerPreview:  $("composerPreview"),
+  composerFavicon:  $("composerFavicon"),
+  composerFaviconLetter: $("composerFaviconLetter"),
+  composerDomain:   $("composerDomain"),
+  composerPreviewLoading: $("composerPreviewLoading"),
+  tagEntryInput:    $("tagEntryInput"),
+  tagChipList:      $("tagChipList"),
+  tagSuggestions:   $("tagSuggestions"),
   emptyState:       $("emptyState"),
   linkFeed:         $("linkFeed"),
   skeletonFeed:     $("skeletonFeed"),
@@ -59,6 +72,7 @@ const el = {
   searchInput:      $("searchInput"),
   filterChips:      $("filterChips"),
   noResults:        $("noResults"),
+  clearFiltersButton: $("clearFiltersButton"),
   confirmDialog:    $("confirmDialog"),
   confirmMsg:       $("confirmMsg"),
   toast:            $("toast"),
@@ -122,6 +136,16 @@ function wireEvents() {
 
   // Reveal expanded fields when URL input is focused
   el.urlInput.addEventListener("focus", expandComposer);
+  el.urlInput.addEventListener("input", onComposerUrlInput);
+  el.extrasToggle.addEventListener("click", () => {
+    if (el.composerExtra.classList.contains("hidden")) expandComposer();
+    else collapseComposer();
+  });
+  el.tagEntryInput.addEventListener("keydown", onTagEntryKeydown);
+  el.tagEntryInput.addEventListener("input", renderTagSuggestions);
+  el.tagEntryInput.addEventListener("focus", renderTagSuggestions);
+  el.tagChipList.addEventListener("click", onTagChipClick);
+  el.tagSuggestions.addEventListener("click", onTagSuggestionClick);
 
   // Delegate edit / delete clicks on the feed
   el.linkFeed.addEventListener("click", onFeedClick);
@@ -129,6 +153,7 @@ function wireEvents() {
   el.linkFeed.addEventListener("keydown", onFeedKeydown);
   el.linkFeed.addEventListener("pointerover", onFeedPointerOver);
   el.linkFeed.addEventListener("pointerout", onFeedPointerOut);
+  el.clearFiltersButton.addEventListener("click", clearFilters);
   el.linkPeek.addEventListener("pointerenter", cancelPeekClose);
   el.linkPeek.addEventListener("pointerleave", schedulePeekClose);
   el.previewClose.addEventListener("click", () => closePreview());
@@ -137,10 +162,19 @@ function wireEvents() {
   });
   el.previewPanel.addEventListener("click", onPreviewPanelClick);
   el.filterChips.addEventListener("click", (event) => {
+    const tagChip = event.target.closest("[data-tag-filter]");
+    if (tagChip) {
+      hideToast();
+      activeTag = activeTag === tagChip.dataset.tagFilter ? null : tagChip.dataset.tagFilter;
+      activeFilter = "all";
+      renderFeed();
+      return;
+    }
     const chip = event.target.closest("[data-filter]");
     if (!chip) return;
     hideToast();
     activeFilter = chip.dataset.filter;
+    activeTag = null;
     renderFeed();
   });
   el.searchInput.addEventListener("input", () => {
@@ -149,6 +183,7 @@ function wireEvents() {
   });
   document.addEventListener("keydown", onGlobalKeydown);
   document.addEventListener("click", (event) => {
+    if (!event.target.closest(".link-menu-wrap")) closeLinkMenus();
     if (!event.target.closest(".user-menu-wrap")) closeUserMenu();
     if (window.matchMedia("(max-width: 599px)").matches && !event.target.closest(".header-search")) {
       closeMobileSearch();
@@ -196,6 +231,7 @@ function onLogout() {
   session.code  = "";
   session.links = [];
   activeFilter = "all";
+  activeTag = null;
   el.searchInput.value = "";
   el.filterChips.textContent = "";
   favoriteRevisions.clear();
@@ -254,18 +290,7 @@ function showApp() {
   el.spaceLabel.textContent = session.name;
   el.spaceLabel.setAttribute("aria-label", `Logged in as ${session.name}`);
   el.userAvatar.textContent = session.name.trim().charAt(0).toLocaleUpperCase() || "?";
-  const avatarPalette = [
-    ["var(--p1-soft)", "var(--p1)"],
-    ["var(--p2-soft)", "var(--p2)"],
-    ["var(--p3-soft)", "var(--p3)"],
-    ["var(--p4-soft)", "var(--p4)"],
-  ];
-  let colorHash = 0;
-  for (const char of session.name) colorHash = (colorHash * 31 + char.charCodeAt(0)) >>> 0;
-  const [avatarBg, avatarFg] = avatarPalette[colorHash % avatarPalette.length];
-  el.userAvatar.style.setProperty("--avatar-bg", avatarBg);
-  el.userAvatar.style.setProperty("--avatar-fg", avatarFg);
-  requestAnimationFrame(() => el.urlInput.focus());
+  el.userAvatar.style.setProperty("--person-color", personColorFor(session.name));
 }
 
 function closeUserMenu() {
@@ -337,6 +362,7 @@ function renderFeed() {
     if (activeFilter === "mine" && link.saverName !== session.name) return false;
     if (activeFilter === "favorites" && !link.isFavorite) return false;
     if (activeFilter.startsWith("person:") && link.saverName !== activeFilter.slice(7)) return false;
+    if (activeTag && !(Array.isArray(link.tags) ? link.tags : []).includes(activeTag)) return false;
     if (!query) return true;
     const searchable = [
       link.title, link.url, link.note, link.description, link.siteName,
@@ -346,9 +372,7 @@ function renderFeed() {
   });
   el.noResults.classList.toggle("hidden", session.links.length === 0 || visibleLinks.length > 0);
   if (session.links.length > 0 && visibleLinks.length === 0) {
-    el.noResults.textContent = activeFilter === "favorites" && !query
-      ? "No favorites yet. Tap the star on a link to save it here."
-      : "No links match this search.";
+    el.noResults.querySelector("span").textContent = "No links match. Clear filters";
   }
 
   if (!visibleLinks.length) return;
@@ -394,17 +418,32 @@ function renderFilterChips() {
     })),
     { key: "favorites", label: "★ Favorites", count: session.links.filter((link) => link.isFavorite).length },
   ];
+  const tags = [...new Set(session.links.flatMap((link) => Array.isArray(link.tags) ? link.tags : []))]
+    .sort((a, b) => a.localeCompare(b));
   el.filterChips.textContent = "";
   for (const filter of filters) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "filter-chip";
     button.dataset.filter = filter.key;
-    button.setAttribute("aria-pressed", String(activeFilter === filter.key));
+    button.setAttribute("aria-pressed", String(!activeTag && activeFilter === filter.key));
     button.append(document.createTextNode(filter.label));
     const count = document.createElement("span");
     count.className = "filter-count";
     count.textContent = String(filter.count);
+    button.append(count);
+    el.filterChips.append(button);
+  }
+  for (const tag of tags) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "filter-chip tag-filter-chip";
+    button.dataset.tagFilter = tag;
+    button.setAttribute("aria-pressed", String(activeTag === tag));
+    button.append(document.createTextNode(`# ${tag}`));
+    const count = document.createElement("span");
+    count.className = "filter-count";
+    count.textContent = String(session.links.filter((link) => (link.tags || []).includes(tag)).length);
     button.append(count);
     el.filterChips.append(button);
   }
@@ -418,20 +457,28 @@ function buildLinkItem(link, index = 0) {
   const title = frag.querySelector(".link-title");
   const note  = frag.querySelector(".link-note");
   const meta  = frag.querySelector(".link-meta");
-  const editBtn = frag.querySelector(".edit-link");
+  const faviconLetter = frag.querySelector(".favicon-letter");
+  const editTitleBtn = frag.querySelector(".edit-title-link");
+  const editDetailsBtn = frag.querySelector(".edit-details-link");
+  const deleteBtn = frag.querySelector(".delete-link");
   const favoriteBtn = frag.querySelector(".favorite-link");
   const tags = frag.querySelector(".link-tags");
 
   item.dataset.id = link.id;
   const displayTitle = displayTitleFor(link);
-  item.setAttribute("aria-label", `Preview ${displayTitle}`);
+  item.setAttribute("aria-label", `Open ${displayTitle}`);
 
   // Stagger entrance animation
   item.style.animationDelay = `${Math.min(index * 40, 280)}ms`;
 
   // Use the site's own favicon with a local link glyph if it has no icon.
   favicon.src = link.faviconUrl || new URL("/favicon.ico", link.url).href;
-  favicon.addEventListener("error", () => faviconTile.classList.add("is-fallback"), { once: true });
+  faviconLetter.textContent = domainOf(link.url).charAt(0).toLocaleUpperCase() || "↗";
+  favicon.addEventListener("error", () => {
+    faviconTile.classList.add("is-fallback");
+    favicon.classList.add("hidden");
+    faviconLetter.classList.remove("hidden");
+  }, { once: true });
 
   // Link content
   title.textContent = displayTitle;
@@ -440,8 +487,11 @@ function buildLinkItem(link, index = 0) {
   if (linkTags.length) {
     tags.classList.remove("hidden");
     for (const tag of linkTags) {
-      const chip = document.createElement("span");
+      const chip = document.createElement("button");
+      chip.type = "button";
       chip.className = "tag-chip";
+      chip.dataset.tagFilter = tag;
+      chip.setAttribute("aria-label", `Filter by tag ${tag}`);
       chip.textContent = tag;
       tags.append(chip);
     }
@@ -465,6 +515,8 @@ function buildLinkItem(link, index = 0) {
   openIcon.textContent = " ↗";
   domainSpan.append(openIcon);
   const saverSpan = document.createElement("span");
+  saverSpan.className = "author-dot";
+  saverSpan.style.setProperty("--person-color", personColorFor(link.saverName));
   saverSpan.textContent = link.saverName;
 
   const timeSpan = document.createElement("time");
@@ -487,7 +539,9 @@ function buildLinkItem(link, index = 0) {
   favoriteBtn.setAttribute("aria-pressed", String(Boolean(link.isFavorite)));
   favoriteBtn.setAttribute("aria-label", link.isFavorite ? "Remove from favorites" : "Add to favorites");
   favoriteBtn.title = link.isFavorite ? "Remove from favorites" : "Add to favorites";
-  editBtn.classList.toggle("hidden", !isMine);
+  editTitleBtn?.classList.toggle("hidden", !isMine);
+  editDetailsBtn?.classList.toggle("hidden", !isMine);
+  deleteBtn?.classList.toggle("hidden", !isMine);
 
   return frag;
 }
@@ -496,9 +550,14 @@ function buildLinkItem(link, index = 0) {
    FEED INTERACTION
 ══════════════════════════════════════════════════════════════════════ */
 async function onFeedClick(e) {
-  const editBtn = e.target.closest(".edit-link");
+  const menuToggle = e.target.closest(".menu-toggle");
+  const previewBtn = e.target.closest(".preview-link");
+  const editTitleBtn = e.target.closest(".edit-title-link");
+  const editDetailsBtn = e.target.closest(".edit-details-link");
+  const deleteBtn = e.target.closest(".delete-link");
   const favoriteBtn = e.target.closest(".favorite-link");
   const copyBtn = e.target.closest(".copy-link");
+  const tagButton = e.target.closest("[data-tag-filter]");
   const item    = e.target.closest(".link-item");
 
   if (!item) return;
@@ -506,10 +565,28 @@ async function onFeedClick(e) {
   const link = session.links.find((l) => l.id === Number(item.dataset.id));
   if (!link) return;
 
+  if (tagButton) {
+    e.preventDefault();
+    hideToast();
+    activeFilter = "all";
+    activeTag = tagButton.dataset.tagFilter;
+    renderFeed();
+    return;
+  }
+
   if (e.target.closest("a")) return;
   if ((e.ctrlKey || e.metaKey) && !e.target.closest("button, input, textarea, select")) {
     e.preventDefault();
     window.open(link.url, "_blank", "noopener,noreferrer");
+    return;
+  }
+
+  if (menuToggle) {
+    const menu = item.querySelector(".link-menu");
+    const opening = menu.classList.contains("hidden");
+    closeLinkMenus();
+    menu.classList.toggle("hidden", !opening);
+    menuToggle.setAttribute("aria-expanded", String(opening));
     return;
   }
 
@@ -529,8 +606,28 @@ async function onFeedClick(e) {
     return;
   }
 
-  if (editBtn) {
-    startEdit(link);
+  if (previewBtn) {
+    closeLinkMenus();
+    openPreview(link, item);
+    return;
+  }
+
+  if (editTitleBtn || editDetailsBtn) {
+    closeLinkMenus();
+    startEdit(link, editTitleBtn ? "title" : "note");
+    return;
+  }
+
+  if (deleteBtn) {
+    closeLinkMenus();
+    const confirmed = await showConfirm(`"${displayTitleFor(link)}" will be removed from your shared space.`);
+    if (!confirmed) return;
+    try {
+      await api(`/api/links/${link.id}`, { method: "DELETE" });
+      await loadLinks();
+    } catch (error) {
+      showStatusError(error.message || "Could not delete. Please try again.");
+    }
     return;
   }
 
@@ -560,6 +657,11 @@ function onGlobalKeydown(event) {
     if (event.key === "Escape") {
       event.preventDefault();
       closePreview();
+      closeLinkMenus();
+      if (el.searchInput.value) {
+        el.searchInput.value = "";
+        renderFeed();
+      }
       return;
     }
     if (event.key === "ArrowUp" || event.key === "ArrowDown") {
@@ -573,18 +675,19 @@ function onGlobalKeydown(event) {
 
   if (event.key === "Escape") {
     if (activePeekId !== null) closePeek();
+    closeLinkMenus();
     const userMenuWasOpen = !el.userDropdown.classList.contains("hidden");
     closeUserMenu();
     if (userMenuWasOpen) el.userMenuButton.focus();
+    if (el.searchInput.value) {
+      el.searchInput.value = "";
+      renderFeed();
+    }
     const mobileSearchWasOpen = el.headerSearch.classList.contains("is-open");
     closeMobileSearch();
     if (mobileSearchWasOpen) el.mobileSearchToggle.focus();
   }
   if (event.key === "/" && !event.metaKey && !event.ctrlKey && !event.altKey) {
-    const target = event.target;
-    const isTypingElsewhere = target instanceof HTMLElement && target !== el.searchInput &&
-      (target.matches("input, textarea, select") || target.isContentEditable);
-    if (isTypingElsewhere) return;
     event.preventDefault();
     if (window.matchMedia("(max-width: 599px)").matches) openMobileSearch();
     el.searchInput.focus();
@@ -677,8 +780,10 @@ function ensurePreviewMetadata(link) {
 }
 
 function displayTitleFor(link) {
-  if (link.title && link.title !== link.url) return link.title;
-  return link.ogTitle || link.title || link.url;
+  const fetchedTitle = link.ogTitle || link.title;
+  const title = link.title && link.title !== link.url && link.title !== fetchedTitle ? link.title : fetchedTitle;
+  if (!title || title === link.url || title.trim().length < 4 || /^(home|homepage|untitled|website)$/i.test(title.trim())) return domainOf(link.url);
+  return title;
 }
 
 function faviconFor(url) {
@@ -850,6 +955,11 @@ function closePeek() {
   el.linkPeek.setAttribute("aria-hidden", "true");
 }
 
+function closeLinkMenus() {
+  document.querySelectorAll(".link-menu").forEach((menu) => menu.classList.add("hidden"));
+  document.querySelectorAll(".menu-toggle").forEach((button) => button.setAttribute("aria-expanded", "false"));
+}
+
 function setFavorite(link, isFavorite, { showToast: shouldShowToast = false, previousFavorite = link.isFavorite } = {}) {
   if (Boolean(link.isFavorite) === isFavorite) return;
 
@@ -913,6 +1023,8 @@ function persistFavorite(link, isFavorite, revision, previousFavorite) {
   const requestHeaders = {
     "x-partner-name": session.name,
     "x-couple-code": session.code,
+    "x-sharelink-action": "favorite",
+    "x-sharelink-favorite": String(isFavorite),
   };
   const save = priorSave.catch(() => {}).then(async () => {
     await api(`/api/links/${link.id}/favorite`, {
@@ -1009,7 +1121,7 @@ function removeFavoriteRow(linkId) {
   row.remove();
   if (group && !group.querySelector(".link-item")) group.remove();
   if (activeFilter === "favorites" && !el.linkFeed.querySelector(".link-item")) {
-    el.noResults.textContent = "No favorites yet. Tap the star on a link to save it here.";
+    el.noResults.querySelector("span").textContent = "No links match. Clear filters";
     el.noResults.classList.remove("hidden");
   }
 }
@@ -1019,6 +1131,171 @@ function removeFavoriteRow(linkId) {
 ══════════════════════════════════════════════════════════════════════ */
 function expandComposer() {
   el.composerExtra.classList.remove("hidden");
+  el.extrasToggle.setAttribute("aria-expanded", "true");
+  el.extrasToggle.innerHTML = 'Hide note or tags <span aria-hidden="true">−</span>';
+}
+
+function collapseComposer() {
+  el.composerExtra.classList.add("hidden");
+  el.extrasToggle.setAttribute("aria-expanded", "false");
+  el.extrasToggle.innerHTML = 'Add note or tags <span aria-hidden="true">+</span>';
+}
+
+function onComposerUrlInput() {
+  const rawUrl = el.urlInput.value.trim();
+  if (el.titleInput.value === autoFetchedTitle) el.titleInput.value = "";
+  autoFetchedTitle = "";
+  const revision = ++metadataPreviewRevision;
+  window.clearTimeout(metadataPreviewTimer);
+  if (!rawUrl) {
+    el.composerPreview.classList.add("hidden");
+    el.composerPreviewLoading.classList.add("hidden");
+    autoFetchedTitle = "";
+    return;
+  }
+
+  let url;
+  try {
+    url = new URL(rawUrl);
+    if (!["http:", "https:"].includes(url.protocol) || !url.hostname) throw new Error("Invalid URL");
+  } catch {
+    el.composerPreview.classList.add("hidden");
+    return;
+  }
+
+  expandComposer();
+  el.composerPreview.classList.remove("hidden");
+  el.composerDomain.textContent = url.hostname.replace(/^www\./, "");
+  el.composerPreviewLoading.classList.remove("hidden");
+  el.composerFavicon.classList.remove("hidden");
+  el.composerFaviconLetter.classList.add("hidden");
+  el.composerFaviconLetter.textContent = url.hostname.charAt(0).toLocaleUpperCase();
+  el.composerFavicon.src = faviconFor(url.toString());
+  el.composerFavicon.onerror = () => {
+    el.composerFavicon.classList.add("hidden");
+    el.composerFaviconLetter.classList.remove("hidden");
+  };
+  el.composerFavicon.onload = () => {
+    el.composerFavicon.classList.remove("hidden");
+    el.composerFaviconLetter.classList.add("hidden");
+  };
+  metadataPreviewTimer = window.setTimeout(async () => {
+    try {
+      const { metadata } = await api("/api/preview-metadata", { method: "POST", body: { url: url.toString() } });
+      if (revision !== metadataPreviewRevision || el.urlInput.value.trim() !== rawUrl) return;
+      el.composerDomain.textContent = url.hostname.replace(/^www\./, "");
+      if (metadata.favicon) {
+        el.composerFavicon.classList.remove("hidden");
+        el.composerFavicon.src = metadata.favicon;
+      }
+      const rawTitle = metadata.title || "";
+      const nextTitle = !rawTitle || rawTitle.trim().length < 4 || /^(home|homepage|untitled|website)$/i.test(rawTitle.trim())
+        ? url.hostname.replace(/^www\./, "")
+        : rawTitle;
+      if (nextTitle && (!el.titleInput.value.trim() || el.titleInput.value === autoFetchedTitle)) {
+        el.titleInput.value = nextTitle;
+        autoFetchedTitle = nextTitle;
+      }
+    } catch {
+      // The URL and domain remain useful when a site blocks metadata requests.
+    } finally {
+      if (revision === metadataPreviewRevision) el.composerPreviewLoading.classList.add("hidden");
+    }
+  }, 360);
+}
+
+function tagValues() {
+  return el.tagsInput.value.split(",").map((tag) => tag.trim()).filter(Boolean);
+}
+
+function setTagValues(values) {
+  const unique = [];
+  for (const value of values) {
+    const tag = String(value).trim().replace(/,/g, "").slice(0, 24);
+    if (tag && !unique.some((existing) => existing.toLocaleLowerCase() === tag.toLocaleLowerCase()) && unique.length < 10) unique.push(tag);
+  }
+  el.tagsInput.value = unique.join(", ");
+  el.tagChipList.textContent = "";
+  for (const tag of unique) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "tag-entry-chip";
+    chip.dataset.removeTag = tag;
+    chip.setAttribute("aria-label", `Remove tag ${tag}`);
+    chip.append(document.createTextNode(`${tag} `));
+    const removeMark = document.createElement("span");
+    removeMark.setAttribute("aria-hidden", "true");
+    removeMark.textContent = "×";
+    chip.append(removeMark);
+    el.tagChipList.append(chip);
+  }
+  renderTagSuggestions();
+}
+
+function addTag(value) {
+  const values = tagValues();
+  values.push(value);
+  setTagValues(values);
+  el.tagEntryInput.value = "";
+  el.tagEntryInput.focus();
+}
+
+function onTagEntryKeydown(event) {
+  if (event.key === "Enter" || event.key === ",") {
+    event.preventDefault();
+    if (el.tagEntryInput.value.trim()) addTag(el.tagEntryInput.value);
+  } else if (event.key === "Backspace" && !el.tagEntryInput.value && tagValues().length) {
+    const values = tagValues();
+    values.pop();
+    setTagValues(values);
+  }
+}
+
+function onTagChipClick(event) {
+  const chip = event.target.closest("[data-remove-tag]");
+  if (!chip) return;
+  setTagValues(tagValues().filter((tag) => tag !== chip.dataset.removeTag));
+}
+
+function renderTagSuggestions() {
+  if (!el.tagSuggestions) return;
+  const query = el.tagEntryInput.value.trim().toLocaleLowerCase();
+  const selected = new Set(tagValues().map((tag) => tag.toLocaleLowerCase()));
+  const tags = [...new Set(session.links.flatMap((link) => Array.isArray(link.tags) ? link.tags : []))]
+    .filter((tag) => !selected.has(tag.toLocaleLowerCase()) && (!query || tag.toLocaleLowerCase().includes(query)))
+    .slice(0, 6);
+  el.tagSuggestions.textContent = "";
+  for (const tag of tags) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "tag-suggestion";
+    button.dataset.tagSuggestion = tag;
+    button.textContent = tag;
+    el.tagSuggestions.append(button);
+  }
+  el.tagSuggestions.classList.toggle("hidden", !tags.length);
+}
+
+function onTagSuggestionClick(event) {
+  const button = event.target.closest("[data-tag-suggestion]");
+  if (button) addTag(button.dataset.tagSuggestion);
+}
+
+function clearFilters() {
+  hideToast();
+  activeFilter = "all";
+  activeTag = null;
+  el.searchInput.value = "";
+  renderFeed();
+  if (window.matchMedia("(max-width: 599px)").matches) openMobileSearch();
+  el.searchInput.focus();
+}
+
+function personColorFor(name) {
+  const colors = ["#86a995", "#8a9dc0", "#bf8c9c", "#c1a76f", "#84aeb0", "#a397c4"];
+  let hash = 0;
+  for (const char of String(name)) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return colors[hash % colors.length];
 }
 
 async function onSaveLink(e) {
@@ -1030,7 +1307,7 @@ async function onSaveLink(e) {
     url:   el.urlInput.value.trim(),
     title: el.titleInput.value.trim(),
     note:  el.noteInput.value.trim(),
-    tags:  el.tagsInput.value.split(",").map((tag) => tag.trim()).filter(Boolean),
+    tags:  tagValues(),
   };
 
   const editingId = el.editingId.value;
@@ -1045,7 +1322,7 @@ async function onSaveLink(e) {
   if (!editingId) {
     const duplicate = session.links.find((link) => canonicalUrlForDuplicate(link.url) === canonicalUrlForDuplicate(body.url));
     if (duplicate) {
-      showError(el.linkError, `Already in your shared space: ${duplicate.title || duplicate.url}`);
+      showError(el.linkError, duplicateNotice(duplicate));
       setInputInvalid(el.urlInput, true);
       return;
     }
@@ -1062,13 +1339,26 @@ async function onSaveLink(e) {
   await withBusy(el.saveButton, async () => {
     const result = await api(path, { method, body });
     if (result.duplicate) {
-      showError(el.linkError, `Already in your shared space: ${result.link.title || result.link.url}`);
+      showError(el.linkError, duplicateNotice(result.link));
       setInputInvalid(el.urlInput, true);
       return;
     }
     const previewAfterSave = returnToPreviewId === Number(editingId) ? Number(editingId) : null;
+    const newLinkId = !editingId ? result.link?.id : null;
     resetComposer();
+    if (newLinkId !== null) {
+      activeFilter = "all";
+      activeTag = null;
+      el.searchInput.value = "";
+    }
     await loadLinks();
+    if (newLinkId !== null) {
+      const newRow = el.linkFeed.querySelector(`[data-id="${newLinkId}"]`);
+      newRow?.classList.add("saved-highlight");
+      newRow?.scrollIntoView({ behavior: "smooth", block: "center" });
+      window.setTimeout(() => newRow?.classList.remove("saved-highlight"), 1600);
+      showToast("Saved");
+    }
     if (previewAfterSave !== null) {
       returnToPreviewId = null;
       const updated = session.links.find((link) => link.id === previewAfterSave);
@@ -1081,17 +1371,28 @@ async function onSaveLink(e) {
   clearStatus();
 }
 
-function startEdit(link) {
+function startEdit(link, focusField = "title") {
   el.editingId.value  = link.id;
   el.urlInput.value   = link.url;
-  el.titleInput.value = link.title;
+  el.titleInput.value = displayTitleFor(link);
+  autoFetchedTitle = "";
   el.noteInput.value  = link.note ?? "";
-  el.tagsInput.value  = Array.isArray(link.tags) ? link.tags.join(", ") : "";
+  setTagValues(Array.isArray(link.tags) ? link.tags : []);
+  el.composerPreview.classList.remove("hidden");
+  el.composerDomain.textContent = domainOf(link.url);
+  el.composerFavicon.src = link.faviconUrl || faviconFor(link.url);
+  el.composerFavicon.classList.remove("hidden");
+  el.composerFaviconLetter.textContent = domainOf(link.url).charAt(0).toLocaleUpperCase();
+  el.composerFaviconLetter.classList.add("hidden");
+  el.composerFavicon.onerror = () => {
+    el.composerFavicon.classList.add("hidden");
+    el.composerFaviconLetter.classList.remove("hidden");
+  };
   el.saveBtnLabel.textContent = "Save changes";
   el.cancelEditButton.classList.remove("hidden");
   expandComposer();
   window.scrollTo({ top: 0, behavior: "smooth" });
-  requestAnimationFrame(() => el.urlInput.focus());
+  requestAnimationFrame(() => (focusField === "note" ? el.noteInput : focusField === "tags" ? el.tagEntryInput : el.titleInput).focus());
 }
 
 function resetComposer() {
@@ -1099,7 +1400,13 @@ function resetComposer() {
   el.editingId.value = "";
   el.saveBtnLabel.textContent = "Save";
   el.cancelEditButton.classList.add("hidden");
-  el.composerExtra.classList.add("hidden");
+  collapseComposer();
+  el.composerPreview.classList.add("hidden");
+  el.composerPreviewLoading.classList.add("hidden");
+  el.tagSuggestions.classList.add("hidden");
+  setTagValues([]);
+  autoFetchedTitle = "";
+  metadataPreviewRevision++;
   clearError(el.linkError);
   setInputInvalid(el.urlInput, false);
 }
@@ -1209,18 +1516,18 @@ function toDayLabel(value) {
   const yesterday = new Date(today);
   yesterday.setDate(today.getDate() - 1);
 
-  if (sameDay(d, today))     return "Today";
-  if (sameDay(d, yesterday)) return "Yesterday";
+  if (sameDay(d, today))     return "TODAY";
+  if (sameDay(d, yesterday)) return "YESTERDAY";
 
   // Within this calendar year: "Wednesday, October 8"
   // Older: "October 8, 2024"
   const sameYear = d.getFullYear() === today.getFullYear();
   return new Intl.DateTimeFormat(undefined, {
-    weekday: sameYear ? "long"  : undefined,
-    month:   "long",
+    weekday: sameYear ? "short" : undefined,
+    month:   "short",
     day:     "numeric",
     year:    sameYear ? undefined : "numeric",
-  }).format(d);
+  }).format(d).toLocaleUpperCase();
 }
 
 function formatTime(value) {
@@ -1229,6 +1536,16 @@ function formatTime(value) {
     hour:   "numeric",
     minute: "2-digit",
   }).format(d);
+}
+
+function formatShortDate(value) {
+  if (!value) return "today";
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(isoToDate(value));
+}
+
+function duplicateNotice(link) {
+  const sender = link?.saverName || "someone";
+  return `Already shared by ${sender} on ${formatShortDate(link?.createdAt)}`;
 }
 
 function sameDay(a, b) {

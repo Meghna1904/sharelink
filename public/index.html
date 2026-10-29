@@ -5,14 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ShareLink — a quiet place for two</title>
     <meta name="description" content="A private space for two people to save and share links together." />
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#faf7f2" />
-    <meta name="theme-color" media="(prefers-color-scheme: dark)"  content="#17140f" />
+    <meta name="theme-color" content="#151110" />
 
-    <!-- Fonts: Fraunces (display) + Inter (body) -->
+    <!-- One warm, compact type system for the whole app. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;0,9..144,500;1,9..144,300;1,9..144,400&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Inter:wght@400;500;600&family=Space+Grotesk:wght@600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/styles.css" />
@@ -27,7 +26,7 @@
 
         <!-- Wordmark -->
         <header class="login-wordmark">
-          <h1>Share<em>Link</em></h1>
+          <h1><span class="app-logo-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M10 13.5 8.7 14.8a3.4 3.4 0 0 1-4.8-4.8l3-3a3.4 3.4 0 0 1 4.8 0M14 10.5l1.3-1.3a3.4 3.4 0 0 1 4.8 4.8l-3 3a3.4 3.4 0 0 1-4.8 0M9 15l6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span>sharelink</h1>
           <p>A quiet place to collect things together.</p>
         </header>
 
@@ -139,7 +138,7 @@
               inputmode="url"
               autocomplete="off"
               spellcheck="false"
-              placeholder="Paste a link to save…"
+              placeholder="Paste a link and press Enter"
               required
               aria-required="true"
               aria-label="URL to save"
@@ -151,54 +150,37 @@
             </button>
           </div>
 
-          <!-- Expanded fields — revealed on focus or in edit mode -->
+          <div class="composer-preview hidden" id="composerPreview" aria-live="polite">
+            <img class="composer-preview-favicon" id="composerFavicon" alt="" />
+            <span class="composer-preview-letter hidden" id="composerFaviconLetter" aria-hidden="true"></span>
+            <div class="composer-preview-copy">
+              <label class="sr-only" for="titleInput">Link title</label>
+              <input id="titleInput" class="composer-preview-title" type="text" placeholder="Page title" maxlength="140" aria-label="Link title" />
+              <span class="composer-preview-domain" id="composerDomain"></span>
+            </div>
+            <span class="composer-preview-loading hidden" id="composerPreviewLoading" aria-hidden="true"></span>
+          </div>
+          <p class="form-error composer-error" id="linkError" role="alert" aria-live="assertive"></p>
+          <button class="extras-toggle" id="extrasToggle" type="button" aria-expanded="false">Add note or tags <span aria-hidden="true">+</span></button>
+
+          <!-- Expanded fields — revealed on URL focus, URL input, or edit mode -->
           <div class="composer-extra hidden" id="composerExtra">
-
-            <div class="field-row">
-              <div class="field">
-                <label for="titleInput">Title <span class="optional">optional</span></label>
-                <input
-                  id="titleInput"
-                  name="title"
-                  type="text"
-                  placeholder="Auto-fetched if blank"
-                  aria-label="Custom title (optional)"
-                  maxlength="140"
-                />
+            <div class="field">
+              <label for="noteInput">Note</label>
+              <textarea id="noteInput" name="note" rows="2" placeholder="Add a thought…" aria-label="Note" maxlength="600"></textarea>
+            </div>
+            <div class="field">
+              <label for="tagEntryInput">Tags</label>
+              <div class="tag-input-shell" id="tagInputShell">
+                <div class="tag-chip-list" id="tagChipList"></div>
+                <input id="tagEntryInput" type="text" placeholder="Type a tag and press Enter" autocomplete="off" aria-label="Add a tag" />
               </div>
+              <input id="tagsInput" name="tags" type="hidden" />
+              <div class="tag-suggestions hidden" id="tagSuggestions" aria-label="Tag suggestions"></div>
             </div>
-
-            <div class="field">
-              <label for="noteInput">Note <span class="optional">optional</span></label>
-              <textarea
-                id="noteInput"
-                name="note"
-                rows="2"
-                placeholder="A thought about this link…"
-                aria-label="Note (optional)"
-                maxlength="600"
-              ></textarea>
-            </div>
-
-            <div class="field">
-              <label for="tagsInput">Tags <span class="optional">optional, comma separated</span></label>
-              <input
-                id="tagsInput"
-                name="tags"
-                type="text"
-                placeholder="Recipes, places, gifts…"
-                aria-label="Tags (comma separated)"
-                maxlength="260"
-              />
-            </div>
-
             <div class="composer-footer">
-              <p class="form-error" id="linkError" role="alert" aria-live="assertive"></p>
-              <button class="btn-cancel hidden" id="cancelEditButton" type="button">
-                Discard edits
-              </button>
+              <button class="btn-cancel hidden" id="cancelEditButton" type="button">Discard edits</button>
             </div>
-
           </div>
 
         </form>
@@ -216,14 +198,13 @@
       <div class="empty-state hidden" id="emptyState" aria-label="No links saved yet">
         <div class="empty-inner">
           <span class="empty-glyph" aria-hidden="true">✦</span>
-          <h2>Nothing here yet</h2>
-          <p>
-            Paste the first link above — a recipe, an article, a place you'd like
-            to remember. Your partner will see it here too.
-          </p>
+          <h2>Nothing shared yet. Paste a link above.</h2>
         </div>
       </div>
-      <p id="noResults" class="no-results hidden" role="status">No links match this search.</p>
+      <div id="noResults" class="no-results hidden" role="status">
+        <span>No links match. Clear filters</span>
+        <button class="clear-filters-button" id="clearFiltersButton" type="button">Clear filters</button>
+      </div>
 
       <!-- ── Feed skeleton (shown while loading) ────────────────── -->
       <div class="feed" id="skeletonFeed" aria-hidden="true" style="padding-top:var(--sp-2)">
@@ -261,6 +242,7 @@
         <div class="link-attribution" aria-hidden="true">
           <span class="favicon-tile">
             <img class="site-favicon" alt="" loading="lazy" />
+            <span class="favicon-letter hidden" aria-hidden="true"></span>
             <svg class="favicon-fallback" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path d="M10 13.5 8.7 14.8a3.4 3.4 0 0 1-4.8-4.8l3-3a3.4 3.4 0 0 1 4.8 0" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
               <path d="m14 10.5 1.3-1.3a3.4 3.4 0 0 1 4.8 4.8l-3 3a3.4 3.4 0 0 1-4.8 0" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
@@ -288,11 +270,17 @@
               <rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>
             </svg>
           </button>
-          <button class="ctrl-btn edit-link" type="button" aria-label="Edit link" title="Edit link">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="m15 5 4 4M4 20l4.2-.9L19 8.3a2.1 2.1 0 0 0-3-3L5.2 16.1 4 20Z"/>
-            </svg>
-          </button>
+          <div class="link-menu-wrap">
+            <button class="ctrl-btn menu-toggle" type="button" aria-label="More actions" aria-haspopup="menu" aria-expanded="false" title="More actions">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+            </button>
+            <div class="link-menu hidden" role="menu">
+              <button class="menu-item preview-link" type="button" role="menuitem">Preview link</button>
+              <button class="menu-item edit-title-link" type="button" role="menuitem">Edit title</button>
+              <button class="menu-item edit-details-link" type="button" role="menuitem">Edit note / tags</button>
+              <button class="menu-item delete-link" type="button" role="menuitem">Delete link</button>
+            </div>
+          </div>
         </div>
       </li>
     </template>
