@@ -2001,7 +2001,9 @@ input::placeholder, textarea::placeholder { color: #b0a498; opacity: 1; }
   font: 700 19px/1 "Space Grotesk", "Geist", system-ui, sans-serif;
   letter-spacing: -.055em;
 }
-.app-brand-link { font-weight: 500; }
+.app-brand-share { color: #f3ede6; }
+.app-brand-link { color: #e0825e; font-weight: 500; }
+.app-brand-link-icon { width: 23px; height: 23px; flex: 0 0 23px; margin-left: -1px; color: #e0825e; transform: translateY(2px); }
 .header-search { width: 360px; justify-self: center; }
 .header-search-field {
   height: 38px;
