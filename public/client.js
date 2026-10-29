@@ -1027,9 +1027,8 @@ function persistFavorite(link, isFavorite, revision, previousFavorite) {
     "x-sharelink-favorite": String(isFavorite),
   };
   const save = priorSave.catch(() => {}).then(async () => {
-    await api(`/api/links/${link.id}/favorite`, {
-      method: "POST",
-      body: { isFavorite },
+    await api(`/api/links/${link.id}`, {
+      method: "PATCH",
       headers: requestHeaders,
       includeAuth: false,
     });
