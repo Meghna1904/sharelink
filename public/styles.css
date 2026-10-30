@@ -1449,7 +1449,8 @@ body.preview-open { overflow: hidden; }
 .link-peek {
   position: fixed;
   z-index: 75;
-  width: 320px;
+  width: 280px;
+  max-width: calc(100vw - 24px);
   overflow: hidden;
   border: 1px solid #342b25;
   border-radius: 12px;
@@ -1458,7 +1459,7 @@ body.preview-open { overflow: hidden; }
   box-shadow: 0 16px 42px rgba(0, 0, 0, .42);
   pointer-events: auto;
 }
-.peek-image-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; }
+.peek-image-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; max-height: 120px; overflow: hidden; background: #151110; }
 .peek-image { width: 100%; height: 100%; object-fit: cover; }
 .peek-image-fallback,
 .preview-hero-fallback {
@@ -1472,10 +1473,11 @@ body.preview-open { overflow: hidden; }
   background: linear-gradient(140deg, rgba(224, 130, 94, .24), #1d1815 72%);
   color: #b0a498;
 }
-.peek-image-fallback img,
+.peek-image-fallback { position: absolute; inset: 0; gap: 7px; background: linear-gradient(140deg, rgba(224, 130, 94, .24), #1d1815 72%); }
+.peek-image-fallback img { width: 28px; height: 28px; object-fit: contain; }
+.peek-image-fallback span { font: 400 11px/1.4 "Geist Mono", ui-monospace, monospace; }
 .preview-hero-fallback img { width: 38px; height: 38px; object-fit: contain; }
 .preview-fallback-glyph { width: 38px; height: 38px; color: #f3ede6; opacity: .8; }
-.peek-image-fallback span,
 .preview-hero-fallback span {
   font: 400 12px/1.4 "Geist Mono", ui-monospace, monospace;
 }
@@ -1633,8 +1635,9 @@ body.preview-open { overflow: hidden; }
   .preview-backdrop { align-items: flex-end; }
   .preview-panel {
     width: 100%;
-    height: 85vh;
-    height: 85dvh;
+    height: 70vh;
+    height: 70dvh;
+    max-height: 70dvh;
     border: 1px solid #342b25;
     border-bottom: 0;
     border-radius: 16px 16px 0 0;

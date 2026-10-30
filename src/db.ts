@@ -169,11 +169,11 @@ function createMemoryDb(): DbClient {
         const [ogTitle, previewImage, description, siteName, faviconUrl, id, coupleId] = params;
         const link = links.find((l) => l.id === Number(id) && l.couple_id === Number(coupleId));
         if (link) {
-          link.og_title = String(ogTitle ?? "");
-          link.preview_image = previewImage ? String(previewImage) : null;
-          link.description = String(description ?? "");
-          link.site_name = String(siteName ?? "");
-          link.favicon_url = faviconUrl ? String(faviconUrl) : null;
+          if (ogTitle) link.og_title = String(ogTitle);
+          if (previewImage) link.preview_image = String(previewImage);
+          if (description) link.description = String(description);
+          if (siteName) link.site_name = String(siteName);
+          if (faviconUrl) link.favicon_url = String(faviconUrl);
           link.metadata_fetched_at = new Date().toISOString();
         }
       } else if (text.includes("UPDATE links")) {

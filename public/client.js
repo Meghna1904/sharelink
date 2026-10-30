@@ -100,7 +100,6 @@ const el = {
   peekImage:        $("peekImage"),
   peekImageFallback: $("peekImageFallback"),
   peekFavicon:      $("peekFavicon"),
-  peekFallbackGlyph: $("peekFallbackGlyph"),
   peekFallbackDomain: $("peekFallbackDomain"),
   peekTitle:        $("peekTitle"),
   peekDescription:  $("peekDescription"),
@@ -757,7 +756,9 @@ function renderPreviewPanel(link) {
 }
 
 function ensurePreviewMetadata(link) {
-  if ((link.metadataFetchedAt && link.previewImage) || metadataLoads.has(link.id)) return metadataLoads.get(link.id);
+  const fetchedAt = Date.parse(link.metadataFetchedAt || "");
+  const metadataIsFresh = Number.isFinite(fetchedAt) && Date.now() - fetchedAt < 24 * 60 * 60 * 1000;
+  if (metadataIsFresh || metadataLoads.has(link.id)) return metadataLoads.get(link.id);
   const request = api(`/api/links/${link.id}/metadata`, { method: "POST" })
     .then(({ link: updated }) => {
       Object.assign(link, {
@@ -769,11 +770,13 @@ function ensurePreviewMetadata(link) {
         metadataFetchedAt: updated.metadataFetchedAt,
       });
       if (activePreviewId === link.id) renderPreviewPanel(link);
+      if (activePeekId === link.id) renderPeek(link);
     })
     .catch(() => {
       // Leave the saved title and domain visible if the metadata service is unavailable.
       link.metadataFetchedAt = new Date().toISOString();
       if (activePreviewId === link.id) renderPreviewPanel(link);
+      if (activePeekId === link.id) renderPeek(link);
     })
     .finally(() => metadataLoads.delete(link.id));
   metadataLoads.set(link.id, request);
@@ -799,14 +802,14 @@ function setImageFrame(image, fallback, favicon, fallbackGlyph, domainLabel, ima
   image.onload = () => fallback.classList.add("hidden");
   favicon.onerror = () => {
     favicon.classList.add("hidden");
-    fallbackGlyph.classList.remove("hidden");
+    fallbackGlyph?.classList.remove("hidden");
   };
   favicon.onload = () => {
     favicon.classList.remove("hidden");
-    fallbackGlyph.classList.add("hidden");
+    fallbackGlyph?.classList.add("hidden");
   };
   favicon.classList.remove("hidden");
-  fallbackGlyph.classList.add("hidden");
+  fallbackGlyph?.classList.add("hidden");
   favicon.src = faviconUrl || "";
   domainLabel.textContent = domain;
   if (imageUrl) {
@@ -888,8 +891,9 @@ function onFeedPointerOver(event) {
   const row = event.target.closest(".link-item");
   if (!row || (event.relatedTarget instanceof Node && row.contains(event.relatedTarget))) return;
   const link = session.links.find((entry) => entry.id === Number(row.dataset.id));
-  if (!link || activePeekId === link.id) return;
+  if (!link) return;
   window.clearTimeout(peekCloseTimer);
+  if (activePeekId === link.id) return;
   window.clearTimeout(peekTimer);
   peekTimer = window.setTimeout(() => showPeek(link, row), 400);
 }
@@ -903,8 +907,35 @@ function onFeedPointerOut(event) {
 
 function showPeek(link, row) {
   if (activePreviewId !== null) return;
+  const feedRect = el.linkFeed.getBoundingClientRect();
+  const gap = 12;
+  const edge = 12;
+  const rightSpace = window.innerWidth - edge - feedRect.right - gap;
+  const leftSpace = feedRect.left - gap - edge;
+  const placeRight = rightSpace >= leftSpace;
+  const availableWidth = Math.min(280, Math.floor(Math.max(rightSpace, leftSpace)));
+  // Keep the hover card in the page gutter so it never obscures saved links.
+  if (availableWidth < 160) {
+    closePeek();
+    return;
+  }
+
   activePeekId = link.id;
   activePeekRow = row;
+  renderPeek(link);
+  el.linkPeek.classList.remove("hidden");
+  el.linkPeek.setAttribute("aria-hidden", "false");
+  el.linkPeek.style.width = `${availableWidth}px`;
+
+  const rowRect = row.getBoundingClientRect();
+  const peekRect = el.linkPeek.getBoundingClientRect();
+  const top = Math.max(edge, Math.min(rowRect.top, window.innerHeight - peekRect.height - edge));
+  el.linkPeek.style.left = `${placeRight ? feedRect.right + gap : feedRect.left - gap - availableWidth}px`;
+  el.linkPeek.style.top = `${top}px`;
+  ensurePreviewMetadata(link);
+}
+
+function renderPeek(link) {
   el.peekTitle.textContent = displayTitleFor(link);
   el.peekDescription.textContent = link.description || "";
   el.peekDescription.classList.toggle("hidden", !link.description);
@@ -913,26 +944,12 @@ function showPeek(link, row) {
     el.peekImage,
     el.peekImageFallback,
     el.peekFavicon,
-    el.peekFallbackGlyph,
+    null,
     el.peekFallbackDomain,
     link.previewImage,
     link.faviconUrl || faviconFor(link.url),
     domainOf(link.url),
   );
-  el.linkPeek.classList.remove("hidden");
-  el.linkPeek.setAttribute("aria-hidden", "false");
-
-  const rowRect = row.getBoundingClientRect();
-  const peekRect = el.linkPeek.getBoundingClientRect();
-  const width = 320;
-  const gap = 12;
-  const right = rowRect.right + gap;
-  const left = right + width <= window.innerWidth - 12
-    ? right
-    : Math.max(12, rowRect.left - width - gap);
-  const top = Math.max(12, Math.min(rowRect.top, window.innerHeight - peekRect.height - 12));
-  el.linkPeek.style.left = `${left}px`;
-  el.linkPeek.style.top = `${top}px`;
 }
 
 function cancelPeekClose() {
@@ -942,7 +959,7 @@ function cancelPeekClose() {
 function schedulePeekClose() {
   window.clearTimeout(peekTimer);
   cancelPeekClose();
-  peekCloseTimer = window.setTimeout(closePeek, 150);
+  peekCloseTimer = window.setTimeout(closePeek, 240);
 }
 
 function closePeek() {

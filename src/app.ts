@@ -180,7 +180,7 @@ async function routeApi(
       normalizeText(metadata.description, 400) ?? "",
       normalizeText(metadata.siteName, 100) ?? "",
       normalizeUrl(metadata.favicon) ?? null,
-      new Date(),
+      Object.values(metadata).some(Boolean) ? new Date() : null,
     ]);
 
     const link = await getLink(ctx.db, auth.couple.id, row!.id, auth.name);
@@ -227,10 +227,10 @@ async function routeApi(
     const id = Number(metadataMatch[1]);
     const existing = await getLink(ctx.db, auth.couple.id, id, auth.name);
     if (!existing) { sendJson(res, 404, { error: "Link not found." }); return; }
-    // A prior request may have been blocked or timed out. Keep successful
-    // image metadata cached, but allow image-less links to be retried when a
-    // preview is opened so transient production fetch failures can recover.
-    if (existing.metadataFetchedAt && existing.previewImage) {
+    // Cache both complete metadata and image-less attempts so hovering does
+    // not fetch the same page repeatedly. Retry stale metadata once per day.
+    const fetchedAt = Date.parse(existing.metadataFetchedAt ?? "");
+    if (Number.isFinite(fetchedAt) && Date.now() - fetchedAt < 24 * 60 * 60 * 1000) {
       sendJson(res, 200, { link: existing });
       return;
     }
@@ -239,8 +239,11 @@ async function routeApi(
     try { metadata = await ctx.metadataFetcher(existing.url); } catch { /* Keep the saved link usable without metadata. */ }
     await ctx.db.query(`
       UPDATE links
-      SET og_title = $1, preview_image = $2, description = $3,
-          site_name = $4, favicon_url = $5, metadata_fetched_at = NOW()
+      SET og_title = COALESCE(NULLIF($1, ''), og_title),
+          preview_image = COALESCE($2, preview_image),
+          description = COALESCE(NULLIF($3, ''), description),
+          site_name = COALESCE(NULLIF($4, ''), site_name),
+          favicon_url = COALESCE($5, favicon_url), metadata_fetched_at = NOW()
       WHERE id = $6 AND couple_id = $7
     `, [
       normalizeText(metadata.title, 140) ?? "",
