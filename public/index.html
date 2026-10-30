@@ -239,7 +239,7 @@
 
     <!-- Link item -->
     <template id="linkTemplate">
-      <li class="link-item" role="listitem" tabindex="0" aria-haspopup="dialog">
+      <li class="link-item" role="listitem" tabindex="0">
         <!-- Site favicon tile -->
         <div class="link-attribution" aria-hidden="true">
           <span class="favicon-tile">
@@ -267,6 +267,11 @@
             aria-label="Add to favorites"
             title="Add to favorites"
           >☆</button>
+          <button class="ctrl-btn preview-link" type="button" aria-label="Preview link" title="Preview link">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
           <button class="ctrl-btn copy-link" type="button" aria-label="Copy link" title="Copy link">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>
@@ -277,7 +282,6 @@
               <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
             </button>
             <div class="link-menu hidden" role="menu">
-              <button class="menu-item preview-link" type="button" role="menuitem">Preview link</button>
               <button class="menu-item edit-title-link" type="button" role="menuitem">Edit title</button>
               <button class="menu-item edit-details-link" type="button" role="menuitem">Edit note / tags</button>
               <button class="menu-item delete-link" type="button" role="menuitem">Delete link</button>
@@ -298,21 +302,6 @@
         </div>
       </div>
     </template>
-
-    <div class="link-peek hidden" id="linkPeek" role="tooltip" aria-hidden="true">
-      <div class="peek-image-wrap">
-        <img class="peek-image hidden" id="peekImage" alt="" />
-        <div class="peek-image-fallback hidden" id="peekImageFallback">
-          <img id="peekFavicon" alt="" />
-          <span id="peekFallbackDomain"></span>
-        </div>
-      </div>
-      <div class="peek-copy">
-        <h3 id="peekTitle"></h3>
-        <p class="peek-description hidden" id="peekDescription"></p>
-        <span class="peek-domain" id="peekDomain"></span>
-      </div>
-    </div>
 
     <div class="preview-backdrop hidden" id="previewBackdrop">
       <aside class="preview-panel" id="previewPanel" role="dialog" aria-modal="true" aria-labelledby="previewTitle" tabindex="-1">

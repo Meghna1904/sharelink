@@ -1434,7 +1434,7 @@ textarea[aria-invalid="true"] {
   .header-search-field, .user-chip { transition: none; }
 }
 
-/* Link preview peek and drawer */
+/* Link preview drawer */
 body.preview-open { overflow: hidden; }
 .preview-open .toast { z-index: 120; }
 .link-item { cursor: pointer; }
@@ -1446,22 +1446,6 @@ body.preview-open { overflow: hidden; }
 .link-domain-open:hover { color: #e0825e; }
 .link-domain-open span { color: #e0825e; }
 
-.link-peek {
-  position: fixed;
-  z-index: 75;
-  width: 280px;
-  max-width: calc(100vw - 24px);
-  overflow: hidden;
-  border: 1px solid #342b25;
-  border-radius: 12px;
-  background: #1d1815;
-  color: #f3ede6;
-  box-shadow: 0 16px 42px rgba(0, 0, 0, .42);
-  pointer-events: auto;
-}
-.peek-image-wrap { position: relative; width: 100%; aspect-ratio: 16 / 9; max-height: 120px; overflow: hidden; background: #151110; }
-.peek-image { width: 100%; height: 100%; object-fit: cover; }
-.peek-image-fallback,
 .preview-hero-fallback {
   width: 100%;
   height: 100%;
@@ -1473,31 +1457,11 @@ body.preview-open { overflow: hidden; }
   background: linear-gradient(140deg, rgba(224, 130, 94, .24), #1d1815 72%);
   color: #b0a498;
 }
-.peek-image-fallback { position: absolute; inset: 0; gap: 7px; background: linear-gradient(140deg, rgba(224, 130, 94, .24), #1d1815 72%); }
-.peek-image-fallback img { width: 28px; height: 28px; object-fit: contain; }
-.peek-image-fallback span { font: 400 11px/1.4 "Geist Mono", ui-monospace, monospace; }
 .preview-hero-fallback img { width: 38px; height: 38px; object-fit: contain; }
 .preview-fallback-glyph { width: 38px; height: 38px; color: #f3ede6; opacity: .8; }
 .preview-hero-fallback span {
   font: 400 12px/1.4 "Geist Mono", ui-monospace, monospace;
 }
-.peek-copy { display: grid; gap: 6px; padding: 12px 14px 14px; }
-.peek-copy h3 {
-  overflow: hidden;
-  color: #f3ede6;
-  font: 600 15px/1.35 Geist, system-ui, sans-serif;
-  text-overflow: ellipsis;
-}
-.peek-description {
-  display: -webkit-box;
-  overflow: hidden;
-  color: #b0a498;
-  font: 400 13px/1.45 Geist, system-ui, sans-serif;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-.peek-domain { color: #b0a498; font: 400 12px/1.4 "Geist Mono", ui-monospace, monospace; }
-
 .preview-backdrop {
   position: fixed;
   z-index: 100;
@@ -1631,7 +1595,6 @@ body.preview-open { overflow: hidden; }
 @keyframes previewSlideIn { from { transform: translateX(24px); } to { transform: translateX(0); } }
 
 @media (max-width: 599px) {
-  .link-peek { display: none !important; }
   .preview-backdrop { align-items: flex-end; }
   .preview-panel {
     width: 100%;

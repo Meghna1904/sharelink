@@ -20,10 +20,6 @@ let activeFavoriteToast = null;
 let activePreviewId = null;
 let previewOpener = null;
 let returnToPreviewId = null;
-let peekTimer = 0;
-let peekCloseTimer = 0;
-let activePeekId = null;
-let activePeekRow = null;
 const metadataLoads = new Map();
 
 /* ── DOM refs ─────────────────────────────────────────────────────────── */
@@ -96,14 +92,6 @@ const el = {
   previewLoadingLines: $("previewLoadingLines"),
   previewOpenSite:  $("previewOpenSite"),
   previewFavorite:  $("previewFavorite"),
-  linkPeek:         $("linkPeek"),
-  peekImage:        $("peekImage"),
-  peekImageFallback: $("peekImageFallback"),
-  peekFavicon:      $("peekFavicon"),
-  peekFallbackDomain: $("peekFallbackDomain"),
-  peekTitle:        $("peekTitle"),
-  peekDescription:  $("peekDescription"),
-  peekDomain:       $("peekDomain"),
   tplDayGroup:      $("tplDayGroup"),
   tplLink:          $("linkTemplate"),
   tplSkeleton:      $("tplSkeleton"),
@@ -150,11 +138,7 @@ function wireEvents() {
   el.linkFeed.addEventListener("click", onFeedClick);
   el.linkFeed.addEventListener("auxclick", onFeedAuxClick);
   el.linkFeed.addEventListener("keydown", onFeedKeydown);
-  el.linkFeed.addEventListener("pointerover", onFeedPointerOver);
-  el.linkFeed.addEventListener("pointerout", onFeedPointerOut);
   el.clearFiltersButton.addEventListener("click", clearFilters);
-  el.linkPeek.addEventListener("pointerenter", cancelPeekClose);
-  el.linkPeek.addEventListener("pointerleave", schedulePeekClose);
   el.previewClose.addEventListener("click", () => closePreview());
   el.previewBackdrop.addEventListener("click", (event) => {
     if (event.target === el.previewBackdrop) closePreview();
@@ -224,7 +208,6 @@ async function onLogin(e) {
 function onLogout() {
   closeUserMenu();
   closePreview({ restoreFocus: false });
-  closePeek();
   localStorage.removeItem("sl.session");
   session.name  = "";
   session.code  = "";
@@ -352,7 +335,6 @@ async function loadLinks() {
 }
 
 function renderFeed() {
-  closePeek();
   el.linkFeed.textContent = "";
   renderFilterChips();
   el.emptyState.classList.toggle("hidden", session.links.length > 0);
@@ -649,7 +631,7 @@ function onFeedKeydown(event) {
   if (!item || event.target !== item || !["Enter", " "].includes(event.key)) return;
   event.preventDefault();
   const link = session.links.find((entry) => entry.id === Number(item.dataset.id));
-  if (link) openPreview(link, item);
+  if (link) window.open(link.url, "_blank", "noopener,noreferrer");
 }
 
 function onGlobalKeydown(event) {
@@ -674,7 +656,6 @@ function onGlobalKeydown(event) {
   }
 
   if (event.key === "Escape") {
-    if (activePeekId !== null) closePeek();
     closeLinkMenus();
     const userMenuWasOpen = !el.userDropdown.classList.contains("hidden");
     closeUserMenu();
@@ -695,7 +676,6 @@ function onGlobalKeydown(event) {
 }
 
 function openPreview(link, opener, { focus = true } = {}) {
-  closePeek();
   const isAlreadyOpen = !el.previewBackdrop.classList.contains("hidden");
   activePreviewId = link.id;
   if (!isAlreadyOpen) previewOpener = opener;
@@ -770,13 +750,11 @@ function ensurePreviewMetadata(link) {
         metadataFetchedAt: updated.metadataFetchedAt,
       });
       if (activePreviewId === link.id) renderPreviewPanel(link);
-      if (activePeekId === link.id) renderPeek(link);
     })
     .catch(() => {
       // Leave the saved title and domain visible if the metadata service is unavailable.
       link.metadataFetchedAt = new Date().toISOString();
       if (activePreviewId === link.id) renderPreviewPanel(link);
-      if (activePeekId === link.id) renderPeek(link);
     })
     .finally(() => metadataLoads.delete(link.id));
   metadataLoads.set(link.id, request);
@@ -884,93 +862,6 @@ async function deleteLinkFromPreview(link) {
   } catch (error) {
     showToast(error.message || "Could not delete. Please try again.", null, true);
   }
-}
-
-function onFeedPointerOver(event) {
-  if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
-  const row = event.target.closest(".link-item");
-  if (!row || (event.relatedTarget instanceof Node && row.contains(event.relatedTarget))) return;
-  const link = session.links.find((entry) => entry.id === Number(row.dataset.id));
-  if (!link) return;
-  window.clearTimeout(peekCloseTimer);
-  if (activePeekId === link.id) return;
-  window.clearTimeout(peekTimer);
-  peekTimer = window.setTimeout(() => showPeek(link, row), 400);
-}
-
-function onFeedPointerOut(event) {
-  const row = event.target.closest(".link-item");
-  if (!row || (event.relatedTarget instanceof Node && row.contains(event.relatedTarget))) return;
-  if (event.relatedTarget && el.linkPeek.contains(event.relatedTarget)) return;
-  schedulePeekClose();
-}
-
-function showPeek(link, row) {
-  if (activePreviewId !== null) return;
-  const feedRect = el.linkFeed.getBoundingClientRect();
-  const gap = 12;
-  const edge = 12;
-  const rightSpace = window.innerWidth - edge - feedRect.right - gap;
-  const leftSpace = feedRect.left - gap - edge;
-  const placeRight = rightSpace >= leftSpace;
-  const availableWidth = Math.min(280, Math.floor(Math.max(rightSpace, leftSpace)));
-  // Keep the hover card in the page gutter so it never obscures saved links.
-  if (availableWidth < 160) {
-    closePeek();
-    return;
-  }
-
-  activePeekId = link.id;
-  activePeekRow = row;
-  renderPeek(link);
-  el.linkPeek.classList.remove("hidden");
-  el.linkPeek.setAttribute("aria-hidden", "false");
-  el.linkPeek.style.width = `${availableWidth}px`;
-
-  const rowRect = row.getBoundingClientRect();
-  const peekRect = el.linkPeek.getBoundingClientRect();
-  const top = Math.max(edge, Math.min(rowRect.top, window.innerHeight - peekRect.height - edge));
-  el.linkPeek.style.left = `${placeRight ? feedRect.right + gap : feedRect.left - gap - availableWidth}px`;
-  el.linkPeek.style.top = `${top}px`;
-  ensurePreviewMetadata(link);
-}
-
-function renderPeek(link) {
-  el.peekTitle.textContent = displayTitleFor(link);
-  el.peekDescription.textContent = link.description || "";
-  el.peekDescription.classList.toggle("hidden", !link.description);
-  el.peekDomain.textContent = domainOf(link.url);
-  setImageFrame(
-    el.peekImage,
-    el.peekImageFallback,
-    el.peekFavicon,
-    null,
-    el.peekFallbackDomain,
-    link.previewImage,
-    link.faviconUrl || faviconFor(link.url),
-    domainOf(link.url),
-  );
-}
-
-function cancelPeekClose() {
-  window.clearTimeout(peekCloseTimer);
-}
-
-function schedulePeekClose() {
-  window.clearTimeout(peekTimer);
-  cancelPeekClose();
-  peekCloseTimer = window.setTimeout(closePeek, 240);
-}
-
-function closePeek() {
-  window.clearTimeout(peekTimer);
-  window.clearTimeout(peekCloseTimer);
-  peekTimer = 0;
-  peekCloseTimer = 0;
-  activePeekId = null;
-  activePeekRow = null;
-  el.linkPeek.classList.add("hidden");
-  el.linkPeek.setAttribute("aria-hidden", "true");
 }
 
 function closeLinkMenus() {
