@@ -22,6 +22,7 @@ export interface Link {
 
 export interface Couple {
   id: number;
+  ownerName?: string | null;
 }
 
 export interface DbClient {
@@ -54,8 +55,10 @@ export function openDatabase(connectionString?: string): DbClient {
       CREATE TABLE IF NOT EXISTS couples (
         id        SERIAL PRIMARY KEY,
         code_hash TEXT   NOT NULL UNIQUE,
+        owner_name TEXT,
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
       );
+      ALTER TABLE couples ADD COLUMN IF NOT EXISTS owner_name TEXT;
 
       CREATE TABLE IF NOT EXISTS links (
         id         SERIAL  PRIMARY KEY,
@@ -85,6 +88,43 @@ export function openDatabase(connectionString?: string): DbClient {
       ALTER TABLE links ADD COLUMN IF NOT EXISTS favicon_url TEXT;
       ALTER TABLE links ADD COLUMN IF NOT EXISTS metadata_fetched_at TIMESTAMP;
 
+      CREATE TABLE IF NOT EXISTS members (
+        id SERIAL PRIMARY KEY,
+        couple_id INTEGER NOT NULL REFERENCES couples(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+      ALTER TABLE members ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
+      ALTER TABLE members DROP CONSTRAINT IF EXISTS members_couple_id_name_key;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_members_active_name
+        ON members (couple_id, name) WHERE active;
+
+      INSERT INTO members (couple_id, name)
+      SELECT DISTINCT couple_id, BTRIM(saver_name)
+      FROM links
+      WHERE BTRIM(saver_name) <> '' AND saver_name <> 'Former member'
+      ON CONFLICT DO NOTHING;
+
+      UPDATE couples c SET owner_name = (
+        SELECT m.name FROM members m
+        WHERE m.couple_id = c.id AND m.active
+        ORDER BY m.created_at, m.id LIMIT 1
+      ) WHERE c.owner_name IS NULL AND EXISTS (
+        SELECT 1 FROM members m WHERE m.couple_id = c.id AND m.active
+      );
+
+      CREATE TABLE IF NOT EXISTS member_removals (
+        token TEXT PRIMARY KEY,
+        couple_id INTEGER NOT NULL REFERENCES couples(id) ON DELETE CASCADE,
+        member_id INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+        member_name TEXT NOT NULL,
+        link_ids INTEGER[] NOT NULL DEFAULT '{}',
+        favorite_link_ids INTEGER[] NOT NULL DEFAULT '{}',
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      );
+      ALTER TABLE member_removals ADD COLUMN IF NOT EXISTS member_id INTEGER REFERENCES members(id) ON DELETE CASCADE;
+
       CREATE TABLE IF NOT EXISTS link_favorites (
         link_id INTEGER NOT NULL REFERENCES links(id) ON DELETE CASCADE,
         user_name TEXT NOT NULL,
@@ -94,6 +134,8 @@ export function openDatabase(connectionString?: string): DbClient {
 
       CREATE INDEX IF NOT EXISTS idx_links_couple_created
         ON links (couple_id, created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_links_couple_saver
+        ON links (couple_id, saver_name);
 
     `);
     initialized = true;
@@ -126,6 +168,7 @@ export function closeDatabase(db: DbClient): Promise<void> {
 
 function createMemoryDb(): DbClient {
   interface CoupleRow { id: number; code_hash: string; created_at: string; }
+  interface MemberRow { id: number; couple_id: number; name: string; active: boolean; created_at: string; }
   interface LinkRow {
     id: number;
     couple_id: number;
@@ -146,13 +189,33 @@ function createMemoryDb(): DbClient {
   }
 
   const couples: CoupleRow[] = [];
+  const members: MemberRow[] = [];
+  const memberRemovals: { token: string; couple_id: number; member_name: string; link_ids: number[]; favorite_link_ids: number[]; created_at: string }[] = [];
   const links: LinkRow[] = [];
   let coupleIdSeq = 1;
+  let memberIdSeq = 1;
   let linkIdSeq = 1;
 
   return {
     async query(text: string, params: unknown[] = []): Promise<void> {
-      if (text.includes("INSERT INTO couples")) {
+      if (text.includes("WITH requested AS") && text.includes("UPDATE links")) {
+        const [coupleId, sourceNames, keepName] = params as [number, string[], string];
+        const sources = new Set(sourceNames.map(String));
+        for (const link of links) {
+          if (link.couple_id === Number(coupleId) && sources.has(link.saver_name)) link.saver_name = String(keepName);
+        }
+        for (let i = members.length - 1; i >= 0; i--) {
+          const member = members[i]!;
+          if (member.couple_id === Number(coupleId) && sources.has(member.name)) members.splice(i, 1);
+        }
+      } else if (text.includes("INSERT INTO members")) {
+        const [coupleId, name] = params as [number, string];
+        addMember(coupleId, name);
+      } else if (text.includes("UPDATE members") && text.includes("SET active = FALSE")) {
+        const [coupleId, name] = params as [number, string];
+        const member = members.find((row) => row.couple_id === Number(coupleId) && row.name === name);
+        if (member) member.active = false;
+      } else if (text.includes("INSERT INTO couples")) {
         const codeHash = params[0] as string;
         if (!couples.some((c) => c.code_hash === codeHash)) {
           couples.push({ id: coupleIdSeq++, code_hash: codeHash, created_at: new Date().toISOString() });
@@ -204,6 +267,17 @@ function createMemoryDb(): DbClient {
       }
     },
     async all<T = Record<string, unknown>>(text: string, params: unknown[] = []): Promise<T[]> {
+      if (text.includes("FROM members m") && text.includes("LEFT JOIN links")) {
+        const coupleId = Number(params[0]);
+        return members
+          .filter((member) => member.couple_id === coupleId)
+          .filter((member) => member.active)
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((member) => ({
+            name: member.name,
+            linkCount: links.filter((link) => link.couple_id === coupleId && link.saver_name === member.name).length,
+          })) as unknown as T[];
+      }
       if (text.includes("FROM links") && text.includes("WHERE couple_id = $1")) {
         const coupleId = Number(params[0]);
         const matching = links
@@ -231,6 +305,30 @@ function createMemoryDb(): DbClient {
       return [];
     },
     async get<T = Record<string, unknown>>(text: string, params: unknown[] = []): Promise<T | undefined> {
+      if (text.includes("WITH requested AS") && text.includes("UPDATE links")) {
+        const [coupleId, sourceNames, keepName] = params as [number, string[], string];
+        const sources = new Set(sourceNames.map(String));
+        const exists = (name: string) => members.some((member) => member.couple_id === Number(coupleId) && member.active && member.name === name);
+        const valid = exists(keepName) && sources.size > 0 && !sources.has(keepName) && [...sources].every(exists);
+        if (!valid) return { valid: false, merged: 0 } as unknown as T;
+        await this.query(text, params);
+        return { valid: true, merged: sources.size } as unknown as T;
+      }
+      if (text.includes("INSERT INTO members") && text.includes("RETURNING id")) {
+        const [coupleId, name] = params as [number, string];
+        const member = addMember(coupleId, name);
+        return member ? ({ id: member.id, name: member.name } as unknown as T) : undefined;
+      }
+      if (text.includes("FROM members") && text.includes("WHERE couple_id = $1 AND name = $2")) {
+        const [coupleId, name] = params;
+        const member = members.find((row) => row.couple_id === Number(coupleId) && row.active && row.name === String(name));
+        return member ? ({ id: member.id, name: member.name } as unknown as T) : undefined;
+      }
+      if (text.includes("FROM couples") && text.includes("owner_name")) {
+        const [coupleId] = params;
+        const couple = couples.find((row) => row.id === Number(coupleId));
+        return couple ? ({ ownerName: (couple as CoupleRow & { owner_name?: string }).owner_name ?? null } as unknown as T) : undefined;
+      }
       if (text.includes("SELECT id FROM couples WHERE code_hash = $1")) {
         const codeHash = String(params[0]);
         const c = couples.find((row) => row.code_hash === codeHash);
@@ -285,4 +383,14 @@ function createMemoryDb(): DbClient {
     },
     async close(): Promise<void> {},
   };
+
+  function addMember(coupleId: number, value: string): MemberRow | undefined {
+    const name = String(value).trim().replace(/\s+/g, " ");
+    if (!name) return undefined;
+    const existing = members.find((member) => member.couple_id === Number(coupleId) && member.active && member.name === name);
+    if (existing) return existing;
+    const member = { id: memberIdSeq++, couple_id: Number(coupleId), name, active: true, created_at: new Date().toISOString() };
+    members.push(member);
+    return member;
+  }
 }

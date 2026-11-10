@@ -48,14 +48,119 @@ export function createServer(options = {}) {
 async function routeApi(req, res, url, context) {
   if (req.method === "POST" && url.pathname === "/api/session") {
     const body = await readJsonBody(req);
-    const auth = validateAuthBody(body);
-    if (!auth.ok) {
-      sendJson(res, 400, { error: auth.error });
+    const code = normalizeCode(body?.code);
+    if (code.length < 4 || code.length > 80) {
+      sendJson(res, 400, { error: "Shared code must be between 4 and 80 characters." });
       return;
     }
 
-    await getOrCreateCouple(context.db, hashCode(auth.code, context.codeSecret));
-    sendJson(res, 200, { partnerName: auth.name });
+    const couple = await getOrCreateCouple(context.db, hashCode(code, context.codeSecret));
+    sendJson(res, 200, { people: await listPeople(context.db, couple.id) });
+    return;
+  }
+
+  if (url.pathname === "/api/people" && req.method === "GET") {
+    const auth = await authenticateCodeRequest(req, context.db, context.codeSecret);
+    if (!auth.ok) {
+      sendJson(res, auth.status, { error: auth.error });
+      return;
+    }
+    sendJson(res, 200, { people: await listPeople(context.db, auth.couple.id) });
+    return;
+  }
+
+  if (url.pathname === "/api/people" && req.method === "POST") {
+    const auth = await authenticateCodeRequest(req, context.db, context.codeSecret);
+    if (!auth.ok) {
+      sendJson(res, auth.status, { error: auth.error });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const name = normalizeName(body?.name);
+    if (!name || name.length > 60) {
+      sendJson(res, 400, { error: "Enter a name up to 60 characters long." });
+      return;
+    }
+
+    const people = await listPeople(context.db, auth.couple.id);
+    const nameKey = normalizedNameKey(name);
+    const exact = people.find((person) => normalizedNameKey(person.name) === nameKey);
+    if (exact) {
+      sendJson(res, 200, { person: exact, existing: true });
+      return;
+    }
+
+    const similar = people.filter((person) => namesOneSlipApart(nameKey, normalizedNameKey(person.name)));
+    if (similar.length && body?.confirmSimilar !== true) {
+      sendJson(res, 409, {
+        error: "A similar name is already here.",
+        similarPeople: similar.map(({ name: personName, linkCount }) => ({ name: personName, linkCount })),
+      });
+      return;
+    }
+
+    const member = await context.db.get(`
+        INSERT INTO members (couple_id, name)
+        VALUES ($1, $2)
+        ON CONFLICT (couple_id, name) DO NOTHING
+        RETURNING id, name
+      `, [auth.couple.id, name]);
+    const person = member ?? await context.db.get(
+      "SELECT id, name FROM members WHERE couple_id = $1 AND name = $2",
+      [auth.couple.id, name]
+    );
+    sendJson(res, 201, { person, existing: false });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/people/merge") {
+    const auth = await authenticateRequest(req, context.db, context.codeSecret);
+    if (!auth.ok) {
+      sendJson(res, auth.status, { error: auth.error });
+      return;
+    }
+    const body = await readJsonBody(req);
+    const keepName = normalizeName(body?.keepName);
+    const sourceNames = [...new Set(Array.isArray(body?.sourceNames) ? body.sourceNames.map(normalizeName).filter(Boolean) : [])];
+    if (!keepName || sourceNames.length === 0 || sourceNames.includes(keepName) || sourceNames.some((name) => name.length > 60)) {
+      sendJson(res, 400, { error: "Choose a name to keep and at least one different name to merge." });
+      return;
+    }
+
+    const result = await context.db.get(`
+        WITH requested AS (
+          SELECT DISTINCT unnest($2::text[]) AS name
+        ), selected AS (
+          SELECT m.name
+          FROM members m
+          WHERE m.couple_id = $1
+            AND (m.name = $3 OR m.name IN (SELECT name FROM requested))
+        ), valid AS (
+          SELECT COUNT(*) = (SELECT COUNT(*) FROM requested) + 1 AS ok
+          FROM selected
+        ), moved AS (
+          UPDATE links
+          SET saver_name = $3
+          WHERE couple_id = $1
+            AND saver_name IN (SELECT name FROM requested)
+            AND (SELECT ok FROM valid)
+          RETURNING id
+        ), deleted AS (
+          DELETE FROM members
+          WHERE couple_id = $1
+            AND name IN (SELECT name FROM requested)
+            AND (SELECT ok FROM valid)
+          RETURNING name
+        )
+        SELECT (SELECT ok FROM valid) AS valid, (SELECT COUNT(*)::int FROM deleted) AS merged
+      `, [auth.couple.id, sourceNames, keepName]);
+    if (!result?.valid || result.merged !== sourceNames.length) {
+      sendJson(res, 400, { error: "Those names changed. Refresh the people list and try again." });
+      return;
+    }
+
+    const people = await listPeople(context.db, auth.couple.id);
+    sendJson(res, 200, { keepName, merged: result.merged, people });
     return;
   }
 
@@ -217,7 +322,39 @@ async function authenticateRequest(req, db, codeSecret) {
     return { ok: false, status: 401, error: "That shared code does not have a space yet." };
   }
 
-  return { ok: true, name: auth.name, couple };
+  const member = await db.get(
+    "SELECT id, name FROM members WHERE couple_id = $1 AND name = $2",
+    [couple.id, auth.name]
+  );
+  if (!member) {
+    return { ok: false, status: 401, error: "Choose an existing name or create a new one first." };
+  }
+
+  return { ok: true, name: member.name, couple };
+}
+
+async function authenticateCodeRequest(req, db, codeSecret) {
+  const code = normalizeCode(req.headers["x-couple-code"]);
+  if (code.length < 4 || code.length > 80) {
+    return { ok: false, status: 401, error: "Enter the shared code again." };
+  }
+  const couple = await db.get("SELECT id FROM couples WHERE code_hash = $1", [hashCode(code, codeSecret)]);
+  if (!couple) {
+    return { ok: false, status: 401, error: "That shared code does not have a space yet." };
+  }
+  return { ok: true, couple };
+}
+
+async function listPeople(db, coupleId) {
+  return db.all(`
+      SELECT m.name, COUNT(l.id)::int AS "linkCount"
+      FROM members m
+      LEFT JOIN links l
+        ON l.couple_id = m.couple_id AND l.saver_name = m.name
+      WHERE m.couple_id = $1
+      GROUP BY m.id, m.name
+      ORDER BY m.name
+    `, [coupleId]);
 }
 
 async function getOrCreateCouple(db, codeHash) {
@@ -243,6 +380,43 @@ function normalizeName(value) {
 
 function normalizeCode(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizedNameKey(value) {
+  return normalizeName(value).normalize("NFKC").toLocaleLowerCase().replace(/\s+/gu, "");
+}
+
+function namesOneSlipApart(a, b) {
+  const left = [...a];
+  const right = [...b];
+  if (Math.min(left.length, right.length) < 4 || Math.abs(left.length - right.length) > 1 || a === b) return false;
+
+  if (left.length === right.length) {
+    const differences = [];
+    for (let i = 0; i < left.length; i++) if (left[i] !== right[i]) differences.push(i);
+    if (differences.length === 1) return true;
+    return differences.length === 2 && differences[1] === differences[0] + 1
+      && left[differences[0]] === right[differences[1]]
+      && left[differences[1]] === right[differences[0]];
+  }
+
+  const shorter = left.length < right.length ? left : right;
+  const longer = left.length < right.length ? right : left;
+  let i = 0;
+  let j = 0;
+  let skipped = false;
+  while (i < shorter.length && j < longer.length) {
+    if (shorter[i] === longer[j]) {
+      i++;
+      j++;
+    } else if (!skipped) {
+      skipped = true;
+      j++;
+    } else {
+      return false;
+    }
+  }
+  return true;
 }
 
 function normalizeText(value, maxLength) {

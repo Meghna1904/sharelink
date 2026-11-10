@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { extname, join, normalize, resolve } from "node:path";
 import { readFile } from "node:fs/promises";
 import { createServer as createHttpServer, IncomingMessage, ServerResponse } from "node:http";
@@ -89,16 +89,240 @@ async function routeApi(
   url: URL,
   ctx: RouteContext
 ): Promise<void> {
-  // POST /api/session — enter or create the shared space
+  // POST /api/session — open the shared shelf without creating a member.
   if (req.method === "POST" && url.pathname === "/api/session") {
     const body = await readJsonBody(req);
-    const auth = validateAuthBody(body);
-    if (!auth.ok) {
-      sendJson(res, 400, { error: auth.error });
+    const code = normalizeCode((body as Record<string, unknown> | null)?.["code"]);
+    if (code.length < 4 || code.length > 80) {
+      sendJson(res, 400, { error: "Shared code must be between 4 and 80 characters." });
       return;
     }
-    await getOrCreateCouple(ctx.db, hashCode(auth.code, ctx.codeSecret));
-    sendJson(res, 200, { partnerName: auth.name });
+    const couple = await getOrCreateCouple(ctx.db, hashCode(code, ctx.codeSecret));
+    if (!couple) { sendJson(res, 500, { error: "Couldn’t open that shelf." }); return; }
+    sendJson(res, 200, { people: await listPeople(ctx.db, couple.id), ownerName: await getOwnerName(ctx.db, couple.id) });
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/people") {
+    const auth = await authenticateCodeRequest(req, ctx.db, ctx.codeSecret);
+    if (!auth.ok) { sendJson(res, auth.status, { error: auth.error }); return; }
+    sendJson(res, 200, { people: await listPeople(ctx.db, auth.couple.id), ownerName: await getOwnerName(ctx.db, auth.couple.id) });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/people") {
+    const auth = await authenticateCodeRequest(req, ctx.db, ctx.codeSecret);
+    if (!auth.ok) { sendJson(res, auth.status, { error: auth.error }); return; }
+    const body = await readJsonBody(req) as Record<string, unknown> | null;
+    const name = normalizeName(body?.["name"]);
+    if (!name || name.length > 60) {
+      sendJson(res, 400, { error: "Enter a name up to 60 characters long." });
+      return;
+    }
+
+    const people = await listPeople(ctx.db, auth.couple.id);
+    const nameKey = normalizedNameKey(name);
+    const exact = people.find((person) => normalizedNameKey(person.name) === nameKey);
+    if (exact) { sendJson(res, 200, { person: exact, existing: true, ownerName: await getOwnerName(ctx.db, auth.couple.id) }); return; }
+
+    const similar = people.filter((person) => namesOneSlipApart(nameKey, normalizedNameKey(person.name)));
+    if (similar.length && body?.["confirmSimilar"] !== true) {
+      sendJson(res, 409, {
+        error: "A similar name is already here.",
+        similarPeople: similar.map(({ name: personName, linkCount }) => ({ name: personName, linkCount })),
+      });
+      return;
+    }
+
+    const person = await ctx.db.get<{ id: number; name: string }>(`
+      INSERT INTO members (couple_id, name)
+      VALUES ($1, $2)
+      ON CONFLICT DO NOTHING
+      RETURNING id, name
+    `, [auth.couple.id, name]) ?? await ctx.db.get<{ id: number; name: string }>(
+      "SELECT id, name FROM members WHERE couple_id = $1 AND name = $2 AND active",
+      [auth.couple.id, name]
+    );
+    if (person) await ctx.db.query("UPDATE couples SET owner_name = $2 WHERE id = $1 AND owner_name IS NULL", [auth.couple.id, person.name]);
+    sendJson(res, 201, { person, existing: false, ownerName: await getOwnerName(ctx.db, auth.couple.id) });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/people/merge") {
+    const auth = await authenticateOwnerRequest(req, ctx.db, ctx.codeSecret);
+    if (!auth.ok) { sendJson(res, auth.status, { error: auth.error }); return; }
+    const body = await readJsonBody(req) as Record<string, unknown> | null;
+    const keepName = normalizeName(body?.["keepName"]);
+    const sourceNames = [...new Set(Array.isArray(body?.["sourceNames"]) ? body["sourceNames"].map(normalizeName).filter(Boolean) : [])];
+    if (!keepName || sourceNames.length === 0 || sourceNames.includes(keepName) || sourceNames.some((name) => name.length > 60)) {
+      sendJson(res, 400, { error: "Choose a name to keep and at least one different name to merge." });
+      return;
+    }
+
+    const result = await ctx.db.get<{ valid: boolean; merged: number }>(`
+      WITH requested AS (
+        SELECT DISTINCT unnest($2::text[]) AS name
+      ), selected AS (
+        SELECT m.name FROM members m
+        WHERE m.couple_id = $1 AND m.active AND (m.name = $3 OR m.name IN (SELECT name FROM requested))
+      ), valid AS (
+        SELECT COUNT(*) = (SELECT COUNT(*) FROM requested) + 1 AS ok FROM selected
+      ), moved AS (
+        UPDATE links SET saver_name = $3
+        WHERE couple_id = $1 AND saver_name IN (SELECT name FROM requested)
+          AND (SELECT ok FROM valid)
+        RETURNING id
+      ), deleted AS (
+        UPDATE members SET active = FALSE
+        WHERE couple_id = $1 AND name IN (SELECT name FROM requested)
+          AND (SELECT ok FROM valid)
+        RETURNING name
+      ), owner_changed AS (
+        UPDATE couples SET owner_name = $3
+        WHERE id = $1 AND owner_name IN (SELECT name FROM requested) AND (SELECT ok FROM valid)
+        RETURNING id
+      )
+      SELECT (SELECT ok FROM valid) AS valid, (SELECT COUNT(*)::int FROM deleted) AS merged
+    `, [auth.couple.id, sourceNames, keepName]);
+    if (!result?.valid || result.merged !== sourceNames.length) {
+      sendJson(res, 400, { error: "Those names changed. Refresh the people list and try again." });
+      return;
+    }
+    sendJson(res, 200, { keepName, merged: result.merged, people: await listPeople(ctx.db, auth.couple.id), ownerName: await getOwnerName(ctx.db, auth.couple.id) });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/people/rename") {
+    const auth = await authenticateOwnerRequest(req, ctx.db, ctx.codeSecret);
+    if (!auth.ok) { sendJson(res, auth.status, { error: auth.error }); return; }
+    const body = await readJsonBody(req) as Record<string, unknown> | null;
+    const oldName = normalizeName(body?.["oldName"]);
+    const newName = normalizeName(body?.["newName"]);
+    if (!oldName || !newName || newName.length > 60) { sendJson(res, 400, { error: "Enter a name up to 60 characters long." }); return; }
+    const source = await ctx.db.get<{ id: number; name: string }>(
+      "SELECT id, name FROM members WHERE couple_id = $1 AND name = $2 AND active",
+      [auth.couple.id, oldName]
+    );
+    if (!source) { sendJson(res, 404, { error: "That person is no longer on the shelf." }); return; }
+    const existing = (await listPeople(ctx.db, auth.couple.id)).find((person) => person.name !== oldName && normalizedNameKey(person.name) === normalizedNameKey(newName));
+    if (existing) { sendJson(res, 409, { error: `${existing.name} is already on the shelf. Merge these names instead.` }); return; }
+    if (oldName !== newName) {
+      await ctx.db.query(`
+        WITH moved_links AS (
+          UPDATE links SET saver_name = $3 WHERE couple_id = $1 AND saver_name = $2 RETURNING id
+        ), copied_favorites AS (
+          INSERT INTO link_favorites (link_id, user_name)
+          SELECT f.link_id, $3 FROM link_favorites f
+          JOIN links l ON l.id = f.link_id AND l.couple_id = $1
+          WHERE f.user_name = $2
+          ON CONFLICT (link_id, user_name) DO NOTHING RETURNING link_id
+        ), removed_old_favorites AS (
+          DELETE FROM link_favorites WHERE user_name = $2
+            AND link_id IN (SELECT id FROM links WHERE couple_id = $1) RETURNING link_id
+        ), renamed_member AS (
+          UPDATE members SET name = $3 WHERE id = $4 RETURNING id
+        )
+        UPDATE couples SET owner_name = $3 WHERE id = $1 AND owner_name = $2
+      `, [auth.couple.id, oldName, newName, source.id]);
+    }
+    sendJson(res, 200, { oldName, newName, people: await listPeople(ctx.db, auth.couple.id), ownerName: await getOwnerName(ctx.db, auth.couple.id) });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/people/remove") {
+    const auth = await authenticateOwnerRequest(req, ctx.db, ctx.codeSecret);
+    if (!auth.ok) { sendJson(res, auth.status, { error: auth.error }); return; }
+    const body = await readJsonBody(req) as Record<string, unknown> | null;
+    const name = normalizeName(body?.["name"]);
+    const keepLinks = body?.["keepLinks"] !== false;
+    if (!name || name === auth.name) { sendJson(res, 400, { error: "The shelf owner can’t remove themselves." }); return; }
+    const person = await ctx.db.get<{ id: number; name: string; linkCount: number }>(`
+      SELECT m.id, m.name, COUNT(l.id)::int AS "linkCount"
+      FROM members m LEFT JOIN links l ON l.couple_id = m.couple_id AND l.saver_name = m.name
+      WHERE m.couple_id = $1 AND m.name = $2 AND m.active
+      GROUP BY m.id, m.name
+    `, [auth.couple.id, name]);
+    if (!person) { sendJson(res, 404, { error: "That person is no longer on the shelf." }); return; }
+
+    if (keepLinks) {
+      const token = randomUUID();
+      const result = await ctx.db.get<{ token: string; linkCount: number }>(`
+        WITH source_member AS (
+          SELECT id FROM members WHERE couple_id = $1 AND name = $2 AND active
+        ), affected_links AS (
+          SELECT id FROM links WHERE couple_id = $1 AND saver_name = $2
+        ), moved_links AS (
+          UPDATE links SET saver_name = 'Former member'
+          WHERE id IN (SELECT id FROM affected_links) AND EXISTS (SELECT 1 FROM source_member)
+          RETURNING id
+        ), removed_favorites AS (
+          DELETE FROM link_favorites WHERE user_name = $2
+            AND link_id IN (SELECT id FROM links WHERE couple_id = $1) RETURNING link_id
+        ), removal_record AS (
+          INSERT INTO member_removals (token, couple_id, member_id, member_name, link_ids, favorite_link_ids)
+          SELECT $3, $1, (SELECT id FROM source_member), $2,
+            COALESCE((SELECT array_agg(id) FROM moved_links), '{}'::int[]),
+            COALESCE((SELECT array_agg(link_id) FROM removed_favorites), '{}'::int[])
+          WHERE EXISTS (SELECT 1 FROM source_member)
+          RETURNING token, link_ids
+        ), inactive_member AS (
+          UPDATE members SET active = FALSE WHERE id = (SELECT id FROM source_member) RETURNING id
+        )
+        SELECT token, cardinality(link_ids)::int AS "linkCount" FROM removal_record
+      `, [auth.couple.id, name, token]);
+      if (!result) { sendJson(res, 409, { error: "Couldn’t remove that person. Refresh and try again." }); return; }
+      sendJson(res, 200, { name, keptLinks: result.linkCount, undoToken: result.token, people: await listPeople(ctx.db, auth.couple.id) });
+      return;
+    }
+
+    const result = await ctx.db.get<{ deletedCount: number }>(`
+      WITH deleted_links AS (
+        DELETE FROM links WHERE couple_id = $1 AND saver_name = $2 RETURNING id
+      ), deleted_favorites AS (
+        DELETE FROM link_favorites WHERE user_name = $2
+          AND link_id IN (SELECT id FROM links WHERE couple_id = $1) RETURNING link_id
+      ), inactive_member AS (
+        UPDATE members SET active = FALSE WHERE couple_id = $1 AND name = $2 AND active RETURNING id
+      )
+      SELECT COUNT(*)::int AS "deletedCount" FROM deleted_links
+    `, [auth.couple.id, name]);
+    sendJson(res, 200, { name, deletedLinks: result?.deletedCount ?? 0, people: await listPeople(ctx.db, auth.couple.id) });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/people/undo-remove") {
+    const auth = await authenticateOwnerRequest(req, ctx.db, ctx.codeSecret);
+    if (!auth.ok) { sendJson(res, auth.status, { error: auth.error }); return; }
+    const body = await readJsonBody(req) as Record<string, unknown> | null;
+    const token = typeof body?.["token"] === "string" ? body["token"] : "";
+    const result = await ctx.db.get<{ memberName: string; linkCount: number }>(`
+      WITH removal AS (
+        SELECT * FROM member_removals WHERE token = $2 AND couple_id = $1
+          AND created_at > NOW() - INTERVAL '10 minutes'
+      ), restored_member AS (
+        UPDATE members SET active = TRUE
+        WHERE id = (SELECT member_id FROM removal)
+          AND NOT EXISTS (SELECT 1 FROM members other WHERE other.couple_id = $1 AND other.active AND other.name = (SELECT member_name FROM removal))
+        RETURNING id
+      ), restored_links AS (
+        UPDATE links SET saver_name = (SELECT member_name FROM removal)
+        WHERE couple_id = $1 AND id = ANY((SELECT link_ids FROM removal))
+          AND saver_name = 'Former member' AND EXISTS (SELECT 1 FROM restored_member)
+        RETURNING id
+      ), restored_favorites AS (
+        INSERT INTO link_favorites (link_id, user_name)
+        SELECT unnest(favorite_link_ids), member_name FROM removal
+        WHERE EXISTS (SELECT 1 FROM restored_member)
+        ON CONFLICT (link_id, user_name) DO NOTHING RETURNING link_id
+      ), consumed AS (
+        DELETE FROM member_removals WHERE token = $2 AND EXISTS (SELECT 1 FROM restored_member)
+        RETURNING member_name
+      )
+      SELECT member_name AS "memberName", cardinality(link_ids)::int AS "linkCount" FROM removal
+      WHERE EXISTS (SELECT 1 FROM consumed)
+    `, [auth.couple.id, token]);
+    if (!result) { sendJson(res, 409, { error: "Undo isn’t available anymore. The name may have been reused, or the 10-minute window ended." }); return; }
+    sendJson(res, 200, { name: result.memberName, restoredLinks: result.linkCount, people: await listPeople(ctx.db, auth.couple.id) });
     return;
   }
 
@@ -440,7 +664,64 @@ async function authenticateRequest(
     return { ok: false, status: 401, error: "That shared code does not have a space yet." };
   }
 
-  return { ok: true, name: auth.name, couple };
+  const person = await db.get<{ id: number; name: string }>(
+    "SELECT id, name FROM members WHERE couple_id = $1 AND name = $2 AND active",
+    [couple.id, auth.name]
+  );
+  if (!person) {
+    return { ok: false, status: 401, error: "Choose an existing name or create a new one first." };
+  }
+
+  return { ok: true, name: person.name, couple };
+}
+
+async function authenticateOwnerRequest(
+  req: IncomingMessage,
+  db: DbClient,
+  codeSecret: string
+): Promise<RequestAuthResult> {
+  const auth = await authenticateRequest(req, db, codeSecret);
+  if (!auth.ok) return auth;
+  const ownerName = await getOwnerName(db, auth.couple.id);
+  if (ownerName !== auth.name) {
+    return { ok: false, status: 403, error: "Only the shelf owner can manage people." };
+  }
+  return auth;
+}
+
+async function authenticateCodeRequest(
+  req: IncomingMessage,
+  db: DbClient,
+  codeSecret: string
+): Promise<{ ok: true; couple: Couple } | { ok: false; status: number; error: string }> {
+  const code = normalizeCode(req.headers["x-couple-code"]);
+  if (code.length < 4 || code.length > 80) {
+    return { ok: false, status: 401, error: "Enter the shared code again." };
+  }
+  const couple = await db.get<Couple>("SELECT id FROM couples WHERE code_hash = $1", [hashCode(code, codeSecret)]);
+  if (!couple) {
+    return { ok: false, status: 401, error: "That shared code does not have a space yet." };
+  }
+  return { ok: true, couple };
+}
+
+async function listPeople(db: DbClient, coupleId: number): Promise<{ name: string; linkCount: number }[]> {
+  return db.all<{ name: string; linkCount: number }>(`
+    SELECT m.name, COUNT(l.id)::int AS "linkCount"
+    FROM members m
+    LEFT JOIN links l ON l.couple_id = m.couple_id AND l.saver_name = m.name
+    WHERE m.couple_id = $1 AND m.active
+    GROUP BY m.id, m.name
+    ORDER BY m.name
+  `, [coupleId]);
+}
+
+async function getOwnerName(db: DbClient, coupleId: number): Promise<string | null> {
+  const result = await db.get<{ ownerName: string | null }>(
+    'SELECT owner_name AS "ownerName" FROM couples WHERE id = $1',
+    [coupleId]
+  );
+  return result?.ownerName ?? null;
 }
 
 async function getOrCreateCouple(db: DbClient, codeHash: string): Promise<Couple | undefined> {
@@ -512,6 +793,38 @@ function normalizeName(value: unknown): string {
 
 function normalizeCode(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizedNameKey(value: unknown): string {
+  return normalizeName(value).normalize("NFKC").toLocaleLowerCase().replace(/\s+/gu, "");
+}
+
+function namesOneSlipApart(a: string, b: string): boolean {
+  const left = [...a];
+  const right = [...b];
+  if (Math.min(left.length, right.length) < 4 || Math.abs(left.length - right.length) > 1 || a === b) return false;
+
+  if (left.length === right.length) {
+    const differences: number[] = [];
+    for (let i = 0; i < left.length; i++) if (left[i] !== right[i]) differences.push(i);
+    if (differences.length === 1) return true;
+    if (differences.length !== 2) return false;
+    const first = differences[0]!;
+    const second = differences[1]!;
+    return second === first + 1 && left[first] === right[second] && left[second] === right[first];
+  }
+
+  const shorter = left.length < right.length ? left : right;
+  const longer = left.length < right.length ? right : left;
+  let i = 0;
+  let j = 0;
+  let skipped = false;
+  while (i < shorter.length && j < longer.length) {
+    if (shorter[i] === longer[j]) { i++; j++; }
+    else if (!skipped) { skipped = true; j++; }
+    else return false;
+  }
+  return true;
 }
 
 function normalizeText(value: unknown, maxLength: number): string | null {

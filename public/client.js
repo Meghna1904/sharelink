@@ -5,7 +5,9 @@
 ══════════════════════════════════════════════════════════════════════ */
 
 /* ── Session state ────────────────────────────────────────────────────── */
-const session = { name: "", code: "", links: [] };
+const session = { name: "", code: "", links: [], people: [], ownerName: null };
+let matchedPerson = null;
+let activePersonAction = null;
 let activeFilter = "all";
 let activeTag = null;
 let metadataPreviewTimer = 0;
@@ -31,12 +33,47 @@ const el = {
   loginForm:        $("loginForm"),
   loginError:       $("loginError"),
   loginSubmitBtn:   $("loginSubmitBtn"),
-  partnerName:      $("partnerName"),
   coupleCode:       $("coupleCode"),
+  identityPicker:   $("identityPicker"),
+  peopleList:       $("peopleList"),
+  rememberIdentity: $("rememberIdentity"),
+  newPersonButton:  $("newPersonButton"),
+  newPersonPanel:   $("newPersonPanel"),
+  newPersonForm:    $("newPersonForm"),
+  newPersonName:    $("newPersonName"),
+  newPersonError:   $("newPersonError"),
+  similarPersonPrompt: $("similarPersonPrompt"),
+  similarPersonMessage: $("similarPersonMessage"),
+  useSimilarPersonButton: $("useSimilarPersonButton"),
+  confirmNewPersonButton: $("confirmNewPersonButton"),
+  backToPinButton:  $("backToPinButton"),
+  backToPeopleButton: $("backToPeopleButton"),
   userMenuButton:   $("userMenuButton"),
   userDropdown:     $("userDropdown"),
   switchUserButton: $("switchUserButton"),
   signOutButton:    $("signOutButton"),
+  settingsButton:   $("settingsButton"),
+  settingsDialog:   $("settingsDialog"),
+  settingsCloseButton: $("settingsCloseButton"),
+  settingsCancelButton: $("settingsCancelButton"),
+  mergePeopleList:  $("mergePeopleList"),
+  renamePersonDialog: $("renamePersonDialog"),
+  renamePersonForm: $("renamePersonForm"),
+  renamePersonInput: $("renamePersonInput"),
+  renamePersonError: $("renamePersonError"),
+  mergePersonDialog: $("mergePersonDialog"),
+  mergePersonMessage: $("mergePersonMessage"),
+  mergeTargetName: $("mergeTargetName"),
+  mergePersonError: $("mergePersonError"),
+  confirmPersonMerge: $("confirmPersonMerge"),
+  removePersonDialog: $("removePersonDialog"),
+  keepLinkCount: $("keepLinkCount"),
+  deleteLinkCount: $("deleteLinkCount"),
+  confirmPersonNameField: $("confirmPersonNameField"),
+  confirmPersonNameLabel: $("confirmPersonNameLabel"),
+  confirmPersonNameInput: $("confirmPersonNameInput"),
+  removePersonError: $("removePersonError"),
+  confirmPersonRemove: $("confirmPersonRemove"),
   userAvatar:       $("userAvatar"),
   headerSearch:     $("headerSearch"),
   mobileSearchToggle: $("mobileSearchToggle"),
@@ -70,6 +107,7 @@ const el = {
   noResults:        $("noResults"),
   clearFiltersButton: $("clearFiltersButton"),
   confirmDialog:    $("confirmDialog"),
+  confirmHeading:   $("confirmHeading"),
   confirmMsg:       $("confirmMsg"),
   toast:            $("toast"),
   toastMessage:     $("toastMessage"),
@@ -103,6 +141,13 @@ wireEvents();
 
 function wireEvents() {
   el.loginForm.addEventListener("submit", onLogin);
+  el.peopleList.addEventListener("click", onPickPersonClick);
+  el.newPersonButton.addEventListener("click", showNewPersonPanel);
+  el.newPersonForm.addEventListener("submit", onCreatePerson);
+  el.useSimilarPersonButton.addEventListener("click", () => matchedPerson && enterAsPerson(matchedPerson.name));
+  el.confirmNewPersonButton.addEventListener("click", () => createNewPerson(true));
+  el.backToPinButton.addEventListener("click", backToPin);
+  el.backToPeopleButton.addEventListener("click", backToPeople);
   el.userMenuButton.addEventListener("click", () => {
     const open = el.userDropdown.classList.contains("hidden");
     closeUserMenu();
@@ -113,6 +158,19 @@ function wireEvents() {
   });
   el.switchUserButton.addEventListener("click", onSwitchUser);
   el.signOutButton.addEventListener("click", onLogout);
+  el.settingsButton.addEventListener("click", openPeopleSettings);
+  el.settingsCloseButton.addEventListener("click", () => el.settingsDialog.close());
+  el.settingsCancelButton.addEventListener("click", () => el.settingsDialog.close());
+  el.mergePeopleList.addEventListener("click", onPersonSettingsClick);
+  el.renamePersonForm.addEventListener("submit", onRenamePerson);
+  el.confirmPersonMerge.addEventListener("click", onMergePerson);
+  el.confirmPersonRemove.addEventListener("click", onRemovePerson);
+  el.confirmPersonNameInput.addEventListener("input", updateRemoveConfirmation);
+  document.querySelectorAll('[name="removeLinksChoice"]').forEach((radio) => radio.addEventListener("change", updateRemoveConfirmation));
+  document.querySelectorAll("[data-close-dialog]").forEach((button) => button.addEventListener("click", () => $(button.dataset.closeDialog).close()));
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".person-actions")) closePersonMenus();
+  });
   el.mobileSearchToggle.addEventListener("click", toggleMobileSearch);
   el.linkForm.addEventListener("submit", onSaveLink);
   el.cancelEditButton.addEventListener("click", () => {
@@ -168,6 +226,7 @@ function wireEvents() {
   document.addEventListener("click", (event) => {
     if (!event.target.closest(".link-menu-wrap")) closeLinkMenus();
     if (!event.target.closest(".user-menu-wrap")) closeUserMenu();
+    if (!event.target.closest(".person-actions")) closePersonMenus();
     if (window.matchMedia("(max-width: 599px)").matches && !event.target.closest(".header-search")) {
       closeMobileSearch();
     }
@@ -181,37 +240,205 @@ async function onLogin(e) {
   e.preventDefault();
   clearError(el.loginError);
 
-  const name = el.partnerName.value.trim();
   const code = el.coupleCode.value.trim();
 
-  if (!name) { showError(el.loginError, "Enter your name."); el.partnerName.focus(); return; }
   if (!code) { showError(el.loginError, "Enter the shared code."); el.coupleCode.focus(); return; }
-
-  setInputInvalid(el.partnerName, false);
   setInputInvalid(el.coupleCode, false);
 
   await withBusy(el.loginSubmitBtn, async () => {
     const data = await api("/api/session", {
       method: "POST",
-      body: { name, code },
+      body: { code },
       includeAuth: false,
     });
-
-    session.name = data.partnerName;
     session.code = code;
-    localStorage.setItem("sl.session", JSON.stringify({ name: session.name, code }));
-    showApp();
-    await loadLinks();
+    session.people = data.people;
+    session.ownerName = data.ownerName ?? null;
+    const remembered = readSavedIdentity();
+    const rememberedPerson = remembered?.code === code
+      ? data.people.find((person) => person.name === remembered.name)
+      : null;
+    if (rememberedPerson) {
+      await enterAsPerson(rememberedPerson.name, { remember: true });
+    } else {
+      showPeoplePicker(data.people, data.ownerName);
+    }
   }, el.loginError);
+}
+
+function showPeoplePicker(people, ownerName = null) {
+  session.people = people;
+  session.ownerName = ownerName;
+  el.loginForm.classList.add("hidden");
+  el.identityPicker.classList.remove("hidden");
+  el.newPersonPanel.classList.add("hidden");
+  el.peopleList.textContent = "";
+  if (!people.length) {
+    const empty = document.createElement("p");
+    empty.className = "people-empty";
+    empty.textContent = "No one has picked a name yet.";
+    el.peopleList.append(empty);
+  }
+  for (const person of people) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "person-choice";
+    button.dataset.personName = person.name;
+    const avatar = document.createElement("span");
+    avatar.className = "person-choice-avatar";
+    avatar.textContent = person.name.trim().charAt(0).toLocaleUpperCase() || "?";
+    const name = document.createElement("span");
+    name.className = "person-choice-name";
+    name.textContent = person.name;
+    const count = document.createElement("span");
+    count.className = "person-choice-count";
+    count.textContent = `${person.linkCount} ${person.linkCount === 1 ? "link" : "links"}`;
+    button.append(avatar, name, count);
+    el.peopleList.append(button);
+  }
+  requestAnimationFrame(() => {
+    (el.peopleList.querySelector(".person-choice") ?? el.newPersonButton).focus();
+  });
+}
+
+function onPickPersonClick(event) {
+  const button = event.target.closest("[data-person-name]");
+  if (button) enterAsPerson(button.dataset.personName);
+}
+
+async function enterAsPerson(name, { remember = el.rememberIdentity.checked } = {}) {
+  session.name = name;
+  saveIdentity({ name, code: session.code }, remember);
+  el.loginView.classList.add("hidden");
+  el.appView.classList.remove("hidden");
+  showApp();
+  showSkeleton();
+  await loadLinks().catch(() => {
+    clearStoredIdentity();
+    session.name = "";
+    el.appView.classList.add("hidden");
+    el.loginView.classList.remove("hidden");
+    el.identityPicker.classList.add("hidden");
+    el.loginForm.classList.remove("hidden");
+    hideSkeleton();
+    showError(el.loginError, "Couldn’t open the shelf. Check the PIN and try again.");
+  });
+}
+
+function showNewPersonPanel() {
+  matchedPerson = null;
+  el.identityPicker.classList.add("hidden");
+  el.newPersonPanel.classList.remove("hidden");
+  el.newPersonForm.reset();
+  el.newPersonForm.querySelector("[type=submit]").classList.remove("hidden");
+  el.similarPersonPrompt.classList.add("hidden");
+  clearError(el.newPersonError);
+  requestAnimationFrame(() => el.newPersonName.focus());
+}
+
+async function onCreatePerson(event) {
+  event.preventDefault();
+  await createNewPerson(false);
+}
+
+async function createNewPerson(confirmSimilar) {
+  clearError(el.newPersonError);
+  matchedPerson = null;
+  const name = el.newPersonName.value.trim();
+  if (!name) {
+    showError(el.newPersonError, "Choose a name first.");
+    el.newPersonName.focus();
+    return;
+  }
+
+  const button = confirmSimilar
+    ? el.confirmNewPersonButton
+    : el.newPersonForm.querySelector("[type=submit]");
+  await withBusy(button, async () => {
+    try {
+      const data = await api("/api/people", {
+        method: "POST",
+        body: { name, confirmSimilar },
+        includeAuth: false,
+        headers: { "x-couple-code": session.code },
+      });
+      if (data.existing) {
+        session.ownerName = data.ownerName ?? session.ownerName;
+        await enterAsPerson(data.person.name);
+        return;
+      }
+      session.ownerName = data.ownerName ?? session.ownerName;
+      session.people = [...session.people, { ...data.person, linkCount: 0 }];
+      await enterAsPerson(data.person.name);
+    } catch (error) {
+      const candidates = error.payload?.similarPeople ?? [];
+      if (error.status === 409 && candidates.length) {
+        matchedPerson = candidates[0];
+        const person = document.createElement("strong");
+        person.textContent = matchedPerson.name;
+        el.similarPersonMessage.replaceChildren(
+          document.createTextNode("Someone called "), person,
+          document.createTextNode(" is already here. Is that you?")
+        );
+        el.similarPersonPrompt.classList.remove("hidden");
+        el.newPersonForm.querySelector("[type=submit]").classList.add("hidden");
+      } else {
+        showError(el.newPersonError, error.message || "Couldn’t create that name.");
+      }
+    }
+  }, el.newPersonError);
+}
+
+function backToPeople() {
+  el.newPersonPanel.classList.add("hidden");
+  el.identityPicker.classList.remove("hidden");
+  clearError(el.newPersonError);
+}
+
+function backToPin() {
+  session.code = "";
+  session.people = [];
+  session.ownerName = null;
+  el.identityPicker.classList.add("hidden");
+  el.newPersonPanel.classList.add("hidden");
+  el.loginForm.classList.remove("hidden");
+  el.coupleCode.value = "";
+  clearError(el.loginError);
+  requestAnimationFrame(() => el.coupleCode.focus());
+}
+
+function readSavedIdentity() {
+  for (const storage of [localStorage, sessionStorage]) {
+    try {
+      const saved = JSON.parse(storage.getItem("sl.session") ?? "null");
+      if (saved?.name && saved?.code) return saved;
+    } catch {}
+  }
+  return null;
+}
+
+function saveIdentity(identity, remember) {
+  const storage = remember ? localStorage : sessionStorage;
+  const otherStorage = remember ? sessionStorage : localStorage;
+  otherStorage.removeItem("sl.session");
+  storage.setItem("sl.session", JSON.stringify(identity));
+  session.remembered = remember;
+}
+
+function clearStoredIdentity() {
+  localStorage.removeItem("sl.session");
+  sessionStorage.removeItem("sl.session");
 }
 
 function onLogout() {
   closeUserMenu();
   closePreview({ restoreFocus: false });
-  localStorage.removeItem("sl.session");
+  clearStoredIdentity();
   session.name  = "";
   session.code  = "";
   session.links = [];
+  session.people = [];
+  session.ownerName = null;
   activeFilter = "all";
   activeTag = null;
   el.searchInput.value = "";
@@ -223,7 +450,9 @@ function onLogout() {
   hideToast();
   el.appView.classList.add("hidden");
   el.loginView.classList.remove("hidden");
-  el.partnerName.value = "";
+  el.loginForm.classList.remove("hidden");
+  el.identityPicker.classList.add("hidden");
+  el.newPersonPanel.classList.add("hidden");
   el.coupleCode.value  = "";
   clearError(el.loginError);
   resetComposer();
@@ -232,34 +461,49 @@ function onLogout() {
   el.emptyState.classList.add("hidden");
   el.noResults.classList.add("hidden");
 
-  requestAnimationFrame(() => el.partnerName.focus());
+  requestAnimationFrame(() => el.coupleCode.focus());
 }
 
 function onSwitchUser() {
   const sharedCode = session.code;
-  onLogout();
-  el.coupleCode.value = sharedCode;
+  closeUserMenu();
+  closePreview({ restoreFocus: false });
+  clearStoredIdentity();
+  session.name = "";
+  session.links = [];
+  session.people = [];
+  session.code = sharedCode;
+  el.appView.classList.add("hidden");
+  el.loginView.classList.remove("hidden");
+  api("/api/session", { method: "POST", body: { code: sharedCode }, includeAuth: false })
+    .then((data) => showPeoplePicker(data.people, data.ownerName))
+    .catch(() => {
+      el.loginForm.classList.remove("hidden");
+      showError(el.loginError, "Couldn’t load names. Enter the PIN again.");
+    });
 }
 
 function restoreSession() {
   try {
-    const saved = JSON.parse(localStorage.getItem("sl.session") ?? "null");
+    const saved = readSavedIdentity();
     if (saved?.name && saved?.code) {
+      session.remembered = Boolean(localStorage.getItem("sl.session"));
       session.name = saved.name;
       session.code = saved.code;
       showApp();
       showSkeleton();
-      loadLinks().catch(() => {
-        localStorage.removeItem("sl.session");
+      Promise.all([loadLinks(), loadPeople()]).catch(() => {
+        clearStoredIdentity();
         hideSkeleton();
         el.appView.classList.add("hidden");
         el.loginView.classList.remove("hidden");
         showError(el.loginError, "Session expired — please enter your details again.");
-        requestAnimationFrame(() => el.partnerName.focus());
+        el.loginForm.classList.remove("hidden");
+        requestAnimationFrame(() => el.coupleCode.focus());
       });
     }
   } catch {
-    localStorage.removeItem("sl.session");
+    clearStoredIdentity();
   }
 }
 
@@ -273,11 +517,187 @@ function showApp() {
   el.spaceLabel.setAttribute("aria-label", `Logged in as ${session.name}`);
   el.userAvatar.textContent = session.name.trim().charAt(0).toLocaleUpperCase() || "?";
   el.userAvatar.style.setProperty("--person-color", personColorFor(session.name));
+  el.settingsButton.classList.remove("hidden");
 }
 
 function closeUserMenu() {
   el.userDropdown.classList.add("hidden");
   el.userMenuButton.setAttribute("aria-expanded", "false");
+}
+
+async function openPeopleSettings() {
+  closeUserMenu();
+  try {
+    const data = await api("/api/people");
+    session.people = data.people;
+    session.ownerName = data.ownerName;
+    renderPeopleSettings(data.people);
+    el.settingsDialog.showModal();
+  } catch (error) {
+    showToast(error.message || "Couldn’t load people.", null, true);
+  }
+}
+
+function renderPeopleSettings(people) {
+  el.mergePeopleList.textContent = "";
+  for (const person of people) {
+    const row = document.createElement("div");
+    row.className = "people-settings-row";
+    const name = document.createElement("span");
+    name.className = "merge-person-name";
+    name.textContent = person.name;
+    if (person.name === session.ownerName) {
+      const ownerBadge = document.createElement("span");
+      ownerBadge.className = "shelf-owner-badge";
+      ownerBadge.textContent = "Shelf owner";
+      name.append(" ", ownerBadge);
+    }
+    const count = document.createElement("span");
+    count.className = "person-choice-count";
+    count.textContent = `${person.linkCount} ${person.linkCount === 1 ? "link" : "links"}`;
+    row.append(name, count);
+    if (session.name === session.ownerName) {
+      const actions = document.createElement("div");
+      actions.className = "person-actions";
+      const menuButton = document.createElement("button");
+      menuButton.type = "button";
+      menuButton.className = "person-menu-trigger";
+      menuButton.textContent = "⋯";
+      menuButton.setAttribute("aria-label", `Actions for ${person.name}`);
+      menuButton.setAttribute("aria-haspopup", "menu");
+      menuButton.setAttribute("aria-expanded", "false");
+      const menu = document.createElement("div");
+      menu.className = "person-actions-menu hidden";
+      menu.setAttribute("role", "menu");
+      for (const [action, label] of [["rename", "Rename"], ["merge", "Merge into another person"], ["remove", "Remove from shelf…"]]) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.personAction = action;
+        button.dataset.personName = person.name;
+        button.textContent = label;
+        button.setAttribute("role", "menuitem");
+        if (action === "remove") {
+          button.className = "danger-action";
+          if (person.name === session.name) { button.disabled = true; button.title = "The shelf owner cannot remove themselves."; }
+        }
+        menu.append(button);
+      }
+      actions.append(menuButton, menu);
+      row.append(actions);
+    }
+    el.mergePeopleList.append(row);
+  }
+}
+
+function closePersonMenus() {
+  el.mergePeopleList.querySelectorAll(".person-actions-menu").forEach((menu) => menu.classList.add("hidden"));
+  el.mergePeopleList.querySelectorAll(".person-menu-trigger").forEach((button) => button.setAttribute("aria-expanded", "false"));
+}
+
+function onPersonSettingsClick(event) {
+  const trigger = event.target.closest(".person-menu-trigger");
+  if (trigger) {
+    const menu = trigger.nextElementSibling;
+    const wasOpen = !menu.classList.contains("hidden");
+    closePersonMenus();
+    if (!wasOpen) { menu.classList.remove("hidden"); trigger.setAttribute("aria-expanded", "true"); }
+    return;
+  }
+  const actionButton = event.target.closest("[data-person-action]");
+  if (!actionButton) return;
+  const { personAction: action, personName: name } = actionButton.dataset;
+  activePersonAction = { action, name, linkCount: session.people.find((p) => p.name === name)?.linkCount ?? 0 };
+  closePersonMenus();
+  if (action === "rename") {
+    el.renamePersonInput.value = name;
+    clearError(el.renamePersonError);
+    el.settingsDialog.close();
+    el.renamePersonDialog.showModal();
+    el.renamePersonInput.focus();
+  } else if (action === "merge") {
+    el.mergePersonMessage.textContent = `Move ${activePersonAction.linkCount} ${activePersonAction.linkCount === 1 ? "link" : "links"} from ${name} into:`;
+    el.mergeTargetName.textContent = "";
+    for (const person of session.people.filter((p) => p.name !== name)) {
+      const option = document.createElement("option"); option.value = person.name; option.textContent = person.name; el.mergeTargetName.append(option);
+    }
+    clearError(el.mergePersonError);
+    el.settingsDialog.close();
+    el.mergePersonDialog.showModal();
+  } else {
+    el.removePersonDialog.querySelector("h2").textContent = `Remove ${name}?`;
+    el.keepLinkCount.textContent = String(activePersonAction.linkCount);
+    el.deleteLinkCount.textContent = String(activePersonAction.linkCount);
+    el.confirmPersonNameInput.value = "";
+    document.querySelector('[name="removeLinksChoice"][value="keep"]').checked = true;
+    clearError(el.removePersonError);
+    updateRemoveConfirmation();
+    el.settingsDialog.close();
+    el.removePersonDialog.showModal();
+  }
+}
+
+async function onRenamePerson(event) {
+  event.preventDefault();
+  if (!activePersonAction) return;
+  clearError(el.renamePersonError);
+  const oldName = activePersonAction.name;
+  const newName = el.renamePersonInput.value.trim();
+  await withBusy(el.renamePersonForm.querySelector('[type="submit"]'), async () => {
+    const result = await api("/api/people/rename", { method: "POST", body: { oldName, newName } });
+    const wasCurrent = session.name === oldName;
+    if (wasCurrent) { session.name = result.newName; saveIdentity({ name: session.name, code: session.code }, session.remembered); }
+    session.people = result.people;
+    session.ownerName = result.ownerName;
+    if (wasCurrent) showApp();
+    el.renamePersonDialog.close();
+    renderPeopleSettings(result.people);
+    el.settingsDialog.showModal();
+    await loadLinks();
+    showToast(`${oldName} renamed to ${result.newName}.`);
+  }, el.renamePersonError);
+}
+
+async function onMergePerson() {
+  if (!activePersonAction) return;
+  clearError(el.mergePersonError);
+  const sourceName = activePersonAction.name;
+  const keepName = el.mergeTargetName.value;
+  await withBusy(el.confirmPersonMerge, async () => {
+    const result = await api("/api/people/merge", { method: "POST", body: { keepName, sourceNames: [sourceName] } });
+    const wasCurrent = session.name === sourceName;
+    if (wasCurrent) { session.name = keepName; saveIdentity({ name: keepName, code: session.code }, session.remembered); }
+    session.people = result.people; session.ownerName = result.ownerName;
+    if (wasCurrent) showApp();
+    el.mergePersonDialog.close(); renderPeopleSettings(result.people); el.settingsDialog.showModal(); await loadLinks();
+    showToast(`${sourceName} merged into ${keepName}.`);
+  }, el.mergePersonError);
+}
+
+function updateRemoveConfirmation() {
+  const deleting = document.querySelector('[name="removeLinksChoice"][value="delete"]').checked;
+  const action = activePersonAction;
+  el.confirmPersonNameField.classList.toggle("hidden", !deleting);
+  el.confirmPersonNameLabel.textContent = deleting && action ? `Type ${action.name} to confirm` : "";
+  el.confirmPersonRemove.textContent = deleting ? `Delete ${action?.linkCount ?? 0} links` : "Remove person";
+  el.confirmPersonRemove.classList.toggle("danger-button", deleting);
+  el.confirmPersonRemove.disabled = deleting && el.confirmPersonNameInput.value !== action?.name;
+}
+
+async function onRemovePerson() {
+  if (!activePersonAction || el.confirmPersonRemove.disabled) return;
+  clearError(el.removePersonError);
+  const { name } = activePersonAction;
+  const keepLinks = document.querySelector('[name="removeLinksChoice"][value="keep"]').checked;
+  await withBusy(el.confirmPersonRemove, async () => {
+    const result = await api("/api/people/remove", { method: "POST", body: { name, keepLinks } });
+    session.people = result.people;
+    el.removePersonDialog.close();
+    renderPeopleSettings(result.people);
+    el.settingsDialog.showModal();
+    await loadLinks();
+    if (keepLinks) showToast(`${name} removed. ${result.keptLinks} links kept.`, { type: "remove-person", token: result.undoToken, duration: 8000 });
+    else showToast(`${name} removed. ${result.deletedLinks} links deleted.`);
+  }, el.removePersonError);
 }
 
 function openMobileSearch() {
@@ -332,6 +752,13 @@ async function loadLinks() {
   for (const link of session.links) persistedFavorites.set(link.id, Boolean(link.isFavorite));
   hideSkeleton();
   renderFeed();
+}
+
+async function loadPeople() {
+  const data = await api("/api/people");
+  session.people = data.people;
+  session.ownerName = data.ownerName;
+  el.settingsButton.classList.remove("hidden");
 }
 
 function renderFeed() {
@@ -502,6 +929,7 @@ function buildLinkItem(link, index = 0) {
   saverSpan.className = "author-dot";
   saverSpan.style.setProperty("--person-color", personColorFor(link.saverName));
   saverSpan.textContent = link.saverName;
+  if (link.saverName === "Former member") saverSpan.classList.add("former-member");
 
   const timeSpan = document.createElement("time");
   timeSpan.dateTime = link.createdAt;
@@ -973,7 +1401,7 @@ function showToast(message, favoriteAction = null, isError = false) {
   el.toast.classList.remove("hidden");
   toastTimer = window.setTimeout(() => {
     hideToast();
-  }, 5000);
+  }, favoriteAction?.duration ?? 5000);
 }
 
 function scheduleFavoriteRemoval(linkId) {
@@ -998,10 +1426,21 @@ function hideToast() {
   el.toast.classList.remove("is-error");
 }
 
-function undoFavoriteChange() {
+async function undoFavoriteChange() {
   const action = activeFavoriteToast;
   if (!action) return;
   hideToast();
+  if (action.type === "remove-person") {
+    try {
+      const result = await api("/api/people/undo-remove", { method: "POST", body: { token: action.token } });
+      session.people = result.people;
+      await loadLinks();
+      showToast(`${result.name} restored. ${result.restoredLinks} links returned.`);
+    } catch (error) {
+      showToast(error.message || "Couldn’t undo removal.", null, true);
+    }
+    return;
+  }
   const link = session.links.find((entry) => entry.id === action.linkId);
   if (link) setFavorite(link, action.previousFavorite, { showToast: false });
 }
@@ -1318,8 +1757,9 @@ function resetComposer() {
 /* ══════════════════════════════════════════════════════════════════════
    DELETE CONFIRM DIALOG
 ══════════════════════════════════════════════════════════════════════ */
-function showConfirm(message) {
+function showConfirm(message, heading = "Remove this link?") {
   return new Promise((resolve) => {
+    el.confirmHeading.textContent = heading;
     el.confirmMsg.textContent = message;
     el.confirmDialog.showModal();
     el.confirmDialog.addEventListener(
@@ -1393,7 +1833,12 @@ async function api(path, opts = {}) {
   });
 
   const payload = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(payload.error ?? "Request failed.");
+  if (!res.ok) {
+    const error = new Error(payload.error ?? "Request failed.");
+    error.status = res.status;
+    error.payload = payload;
+    throw error;
+  }
   return payload;
 }
 

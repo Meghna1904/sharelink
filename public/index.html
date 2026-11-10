@@ -31,45 +31,66 @@
         </header>
 
         <!-- Login form -->
-        <form id="loginForm" class="login-form" novalidate aria-label="Sign in to your shared space">
-
+        <form id="loginForm" class="login-form" novalidate aria-label="Open your shared shelf">
           <div class="field">
-            <label for="partnerName">Your name</label>
-            <input
-              id="partnerName"
-              name="name"
-              type="text"
-              autocomplete="given-name"
-              placeholder="How should we call you?"
-              required
-              aria-required="true"
-            />
-          </div>
-
-          <div class="field">
-            <label for="coupleCode">Shared code</label>
+            <h2 class="onboarding-title">Open your shelf</h2>
+            <label for="coupleCode">Enter the PIN you share</label>
             <input
               id="coupleCode"
               name="code"
               type="text"
-              autocomplete="current-password"
-              placeholder="Your secret word or phrase"
+              inputmode="numeric"
+              autocomplete="one-time-code"
+              placeholder="Shared PIN"
               required
               aria-required="true"
             />
             <span class="field-hint" id="coupleCodeHint">
-              Both of you use the same code to open the same shared space.
+              The PIN opens your shelf. It won’t create a person.
             </span>
           </div>
 
           <p class="form-error" id="loginError" role="alert" aria-live="assertive"></p>
 
           <button class="btn-enter" type="submit" id="loginSubmitBtn">
-            <span class="btn-label">Open our space</span>
+            <span class="btn-label">Continue</span>
             <span class="btn-loader" aria-hidden="true"></span>
           </button>
-
         </form>
+
+        <section class="identity-picker hidden" id="identityPicker" aria-labelledby="identityHeading">
+          <div>
+            <h2 class="onboarding-title" id="identityHeading">Who’s this?</h2>
+            <p class="onboarding-copy">Tap your name so your links stay together.</p>
+          </div>
+          <div class="people-list" id="peopleList"></div>
+          <p class="onboarding-divider">Not on the list?</p>
+          <button class="secondary-action" id="newPersonButton" type="button">I’m new here</button>
+          <label class="remember-choice"><input id="rememberIdentity" type="checkbox" checked /> <span>Remember me on this device</span></label>
+          <button class="text-action" id="backToPinButton" type="button">Back to PIN</button>
+        </section>
+
+        <section class="identity-picker hidden" id="newPersonPanel" aria-labelledby="newPersonHeading">
+          <div>
+            <h2 class="onboarding-title" id="newPersonHeading">Pick a name</h2>
+            <p class="onboarding-copy">This is how others see you on the shelf.</p>
+          </div>
+          <form id="newPersonForm" class="login-form" novalidate>
+            <div class="field">
+              <label for="newPersonName">Your name</label>
+              <input id="newPersonName" type="text" maxlength="60" autocomplete="given-name" placeholder="Choose a name" required />
+            </div>
+            <p class="form-error" id="newPersonError" role="alert" aria-live="assertive"></p>
+            <div class="similar-person hidden" id="similarPersonPrompt">
+              <p id="similarPersonMessage"></p>
+              <button class="btn-enter" id="useSimilarPersonButton" type="button">Yes, that’s me</button>
+              <button class="secondary-action" id="confirmNewPersonButton" type="button">No, I’m someone new</button>
+            </div>
+            <button class="btn-enter" id="createPersonButton" type="submit">Continue</button>
+          </form>
+          <p class="onboarding-footnote">Names are matched ignoring capitals, spaces, and one-letter slips.</p>
+          <button class="text-action" id="backToPeopleButton" type="button">Back to names</button>
+        </section>
 
       </div>
     </div><!-- /login-view -->
@@ -116,6 +137,7 @@
               <svg class="user-chevron" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </button>
             <div class="user-dropdown hidden" id="userDropdown" role="menu" aria-label="User menu">
+              <button type="button" class="user-menu-item" id="settingsButton" role="menuitem">Settings</button>
               <button type="button" class="user-menu-item" id="switchUserButton" role="menuitem">Switch user</button>
               <button type="button" class="user-menu-item" id="signOutButton" role="menuitem">Sign out</button>
             </div>
@@ -355,6 +377,57 @@
           <button class="btn-delete"    value="confirm" type="submit">Delete</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog class="settings-dialog" id="settingsDialog" aria-labelledby="settingsHeading">
+      <div class="settings-content">
+        <button class="preview-close" id="settingsCloseButton" type="button" aria-label="Close settings">×</button>
+        <p class="eyebrow">SETTINGS</p>
+        <h2 id="settingsHeading">People</h2>
+        <p class="settings-copy">People using this shelf. Only the shelf owner can rename, merge, or remove someone.</p>
+        <div class="merge-people-list" id="mergePeopleList"></div>
+        <div class="settings-actions">
+          <button class="secondary-action" id="settingsCancelButton" type="button">Done</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog class="settings-dialog action-dialog" id="renamePersonDialog" aria-labelledby="renamePersonHeading">
+      <form class="settings-content" id="renamePersonForm" novalidate>
+        <button class="preview-close" data-close-dialog="renamePersonDialog" type="button" aria-label="Close rename dialog">×</button>
+        <p class="eyebrow">PEOPLE</p>
+        <h2 id="renamePersonHeading">Rename person</h2>
+        <div class="field"><label for="renamePersonInput">New name</label><input id="renamePersonInput" type="text" maxlength="60" required /></div>
+        <p class="form-error" id="renamePersonError" role="alert" aria-live="assertive"></p>
+        <div class="settings-actions"><button class="secondary-action" data-close-dialog="renamePersonDialog" type="button">Cancel</button><button class="btn-save" id="savePersonRename" type="submit">Save name</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="settings-dialog action-dialog" id="mergePersonDialog" aria-labelledby="mergePersonHeading">
+      <div class="settings-content">
+        <button class="preview-close" data-close-dialog="mergePersonDialog" type="button" aria-label="Close merge dialog">×</button>
+        <p class="eyebrow">PEOPLE</p>
+        <h2 id="mergePersonHeading">Merge person</h2>
+        <p class="settings-copy" id="mergePersonMessage"></p>
+        <div class="field"><label for="mergeTargetName">Merge into</label><select id="mergeTargetName"></select></div>
+        <p class="form-error" id="mergePersonError" role="alert" aria-live="assertive"></p>
+        <div class="settings-actions"><button class="secondary-action" data-close-dialog="mergePersonDialog" type="button">Cancel</button><button class="btn-save" id="confirmPersonMerge" type="button">Merge links</button></div>
+      </div>
+    </dialog>
+
+    <dialog class="settings-dialog action-dialog" id="removePersonDialog" aria-labelledby="removePersonHeading">
+      <div class="settings-content">
+        <button class="preview-close" data-close-dialog="removePersonDialog" type="button" aria-label="Close remove dialog">×</button>
+        <p class="eyebrow">PEOPLE</p>
+        <h2 id="removePersonHeading">Remove person?</h2>
+        <div class="remove-person-options">
+          <label class="remove-choice"><input type="radio" name="removeLinksChoice" value="keep" checked /><span><strong>Keep their links</strong><small><span id="keepLinkCount">0</span> links stay on the shelf under “Former member”.</small></span></label>
+          <label class="remove-choice remove-choice-danger"><input type="radio" name="removeLinksChoice" value="delete" /><span><strong>Delete their links too</strong><small><span id="deleteLinkCount">0</span> links are removed for everyone and can’t be undone.</small></span></label>
+        </div>
+        <div class="field hidden" id="confirmPersonNameField"><label id="confirmPersonNameLabel" for="confirmPersonNameInput"></label><input id="confirmPersonNameInput" type="text" autocomplete="off" /></div>
+        <p class="form-error" id="removePersonError" role="alert" aria-live="assertive"></p>
+        <div class="settings-actions"><button class="secondary-action" data-close-dialog="removePersonDialog" type="button">Cancel</button><button class="btn-save" id="confirmPersonRemove" type="button">Remove person</button></div>
+      </div>
     </dialog>
 
     <script src="/client.js" type="module"></script>
