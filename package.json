@@ -4,7 +4,7 @@
   "description": "A private space for two people to save and share links together.",
   "type": "module",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/sync-runtime.js",
     "start": "node dist/server.js",
     "dev": "node --env-file=.env.local --watch dist/server.js",
     "test": "node --test test/api.test.js"
