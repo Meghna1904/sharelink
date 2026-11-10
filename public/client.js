@@ -438,6 +438,7 @@ function buildLinkItem(link, index = 0) {
   const title = frag.querySelector(".link-title");
   const note  = frag.querySelector(".link-note");
   const meta  = frag.querySelector(".link-meta");
+  const domainRow = frag.querySelector(".link-domain-row");
   const faviconLetter = frag.querySelector(".favicon-letter");
   const editTitleBtn = frag.querySelector(".edit-title-link");
   const editDetailsBtn = frag.querySelector(".edit-details-link");
@@ -484,7 +485,7 @@ function buildLinkItem(link, index = 0) {
     note.remove();
   }
 
-  // Compact metadata: "domain · author · time"
+  // Keep the domain distinct from the saver and time footer.
   const domainSpan = document.createElement("a");
   domainSpan.className = "link-domain-open";
   domainSpan.href = link.url;
@@ -495,6 +496,8 @@ function buildLinkItem(link, index = 0) {
   openIcon.setAttribute("aria-hidden", "true");
   openIcon.textContent = " ↗";
   domainSpan.append(openIcon);
+  domainRow.append(domainSpan);
+
   const saverSpan = document.createElement("span");
   saverSpan.className = "author-dot";
   saverSpan.style.setProperty("--person-color", personColorFor(link.saverName));
@@ -504,15 +507,7 @@ function buildLinkItem(link, index = 0) {
   timeSpan.dateTime = link.createdAt;
   timeSpan.textContent = formatTime(link.createdAt);
 
-  for (const [index, part] of [domainSpan, saverSpan, timeSpan].entries()) {
-    if (index) {
-      const sep = document.createElement("span");
-      sep.className = "meta-sep";
-      sep.setAttribute("aria-hidden", "true");
-      meta.append(sep);
-    }
-    meta.append(part);
-  }
+  meta.append(saverSpan, timeSpan);
 
   // Editing and deletion stay limited to the original saver.
   const isMine = link.saverName === session.name;
